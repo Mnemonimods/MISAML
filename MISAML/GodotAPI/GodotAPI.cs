@@ -46,7 +46,7 @@ public static class Primitives
 
     // remembers the Callable made per (object, signal, handler) so Disconnect
     // hands godot that exact one back
-    private static readonly Dictionary<(GodotObject, string, Delegate), Callable> _connections = new();
+    private static readonly Dictionary<(GodotObject, string, Delegate), Callable> _connections = [];
 
     // handler gets the signals args as an array (empty if none)
     public static unsafe void Connect(GodotObject instance, string signalName, Action<object?[]> handler)
@@ -158,10 +158,32 @@ public static class Primitives
     private static Variant ToVariant(object? value) => value switch
     {
         null => new Variant(),
+        Variant v => v,
         object?[] arr => Variant.From(new Godot.Collections.Array(arr.Select(x => ToVariant(x)))),
         Dictionary<object, object?> dict => Variant.From(ToGodotDict(dict)),
-        _ => Variant.From((dynamic)value),
+        _ => (Variant)VariantFromFor(value.GetType()).Invoke(null, [value])!,
     };
+
+    // Variant.From<T> generic, so each C# type needs own closed ver,
+    // built the first time that type is used, then cached
+    private static readonly Dictionary<Type, MethodInfo> _fromCache = [];
+
+    private static MethodInfo VariantFromFor(Type type)
+    {
+        lock (_fromCache)
+        {
+            if (!_fromCache.TryGetValue(type, out var method))
+            {
+                method = typeof(Variant).GetMethods()
+                    .First(m => m.Name == "From" && m.IsGenericMethodDefinition
+                             && m.GetParameters().Length == 1
+                             && m.GetParameters()[0].ParameterType.IsByRef)
+                    .MakeGenericMethod(type);
+                _fromCache[type] = method;
+            }
+            return method;
+        }
+    }
 
     private static Godot.Collections.Dictionary ToGodotDict(Dictionary<object, object?> dict)
     {

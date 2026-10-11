@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using MISAML.Core;
 
 namespace MISAML.Bootstrap;
 
@@ -34,10 +35,19 @@ public static class ModLoader
       "name": "example mod",
       "version": "1.0.0",
       "entryAssembly": "examplemod.dll",
+      "script": "main.gd",
       "enabled": true
     }
     */
-    private record ModManifest(string Id, string Name, string Version, string EntryAssembly, bool Enabled);
+    private record ModManifest(
+        string Id,
+        string Name, 
+        string Version, 
+        string? Description, 
+        string? EntryAssembly, 
+        string? EntryScript, 
+        bool Enabled
+    );
 
     public static void LoadMods(string modsDir, Action<string> log)
     {
@@ -106,42 +116,92 @@ public static class ModLoader
 
             if (!manifest.Enabled)
             {
-                _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null));
+                _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null, manifest.Description));
                 log($"{manifest.Id}: disabled, not loading");
                 continue;
             }
 
-            var dllPath = Path.Combine(modDir, manifest.EntryAssembly);
-            if (!File.Exists(dllPath))
-            {
-                var err = $"entry assembly not found: {dllPath}";
-                _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, false, err));
-                log($"{manifest.Id}: {err}");
-                continue;
-            }
+            // a mod is a dll (entryAssembly), a GDScript (script), or both
+            string? err = null;
 
             try
             {
-                var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
+                if (manifest.EntryAssembly == null && manifest.EntryScript == null)
+                    throw new Exception("mod manifest requires an entry assembly or script!");
 
-                var entryType = asm.GetTypes().FirstOrDefault(t => t.Name == "ModEntry")
-                    ?? throw new Exception("no type named 'ModEntry' found in assembly");
-
-                var initMethod = entryType.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)
-                    ?? throw new Exception("ModEntry.Initialize() not found (must be public static)");
-
-                initMethod.Invoke(null, null);
-
-                _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, true, null));
-                log($"{manifest.Id}: loaded OK");
+                if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
+                if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);
             }
             catch (Exception e)
             {
-                // one broken mod must never take the others down with it
-                var err = $"{e.GetType().Name}: {e.Message}";
-                _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, false, err));
-                log($"{manifest.Id}: failed to load - {err}");
+                // one broken mod never takes others down with it, Invoke()
+                // wraps errors, show the real one
+                var ue = e is TargetInvocationException { InnerException: {} inner } ? inner : e;
+                err = $"{ue.GetType().Name}: {ue.Message}";
             }
+
+            _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
+            log(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
         }
+    }
+
+    private static void LoadDll(string modDir, ModManifest manifest)
+    {
+        var dllPath = Path.Combine(modDir, manifest.EntryAssembly!);
+        if (!File.Exists(dllPath))
+            throw new FileNotFoundException($"assembly not found: {dllPath}");
+
+        var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
+
+        var entryType = asm.GetTypes().FirstOrDefault(t => t.Name == "ModEntry")
+            ?? throw new Exception("no type named 'ModEntry' found in assembly");
+
+        var initMethod = entryType.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new Exception("ModEntry.Initialize() not found (must be public static)");
+
+        initMethod.Invoke(null, null);
+    }
+
+    // keeps script instances alive (a script that is not a Node would be freed)
+    private static readonly List<object> _scriptInstances = [];
+
+    private static void LoadScript(string modDir, ModManifest manifest, Action<string> log)
+    {
+        var path = Path.Combine(modDir, manifest.EntryScript!);
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"script not found: {path}");
+
+        // so a bad path fails at load time
+        var source = File.ReadAllText(path);
+
+        // mods load before the game is running, so the actual work waits for OnReady
+        GodotBridge.OnReady(() =>
+        {
+            var script = GodotBridge.Instantiate("GDScript");
+            GodotBridge.Set(script, "source_code", source);
+
+            var result = Convert.ToInt64(GodotBridge.Call(script, "reload"));
+            if (result != 0)
+            {
+                log($"{manifest.Id}: GDScript failed to compile (error {result}), see the game console");
+                return;
+            }
+
+            var instance = GodotBridge.Call(script, "new")!;
+            _scriptInstances.Add(instance);
+            GodotBridge.Call(instance, "set_meta", "mod_dir", modDir);
+
+            if (Equals(GodotBridge.Call(instance, "is_class", "Node"), true))
+            {
+                var tree = GodotBridge.CallStatic("Godot.Engine", "GetMainLoop")!;
+                var root = GodotBridge.Get(tree, "root")!;
+                GodotBridge.Call(root, "add_child", instance);
+                log($"{manifest.Id}: script running");
+            }
+            else
+            {
+                log($"{manifest.Id}: script loaded but it isn't a Node, so it won't run _ready/_process (use 'extends Node')");
+            }
+        });
     }
 }

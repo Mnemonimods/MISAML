@@ -157,4 +157,4 @@ public static class Loader
     private static readonly System.Diagnostics.Stopwatch _stopwatch = System.Diagnostics.Stopwatch.StartNew();
 }
 
-public record ModStatus(string Id, string Name, string Version, bool Enabled, bool Loaded, string? Error);
+public record ModStatus(string Id, string Name, string Version, bool Enabled, bool Loaded, string? Error, string? Description = null);

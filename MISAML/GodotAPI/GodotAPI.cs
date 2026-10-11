@@ -2,71 +2,35 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.Loader;
 using Godot;
+using Godot.NativeInterop;
 
 namespace MISAML.GodotAPI;
 
-// Direct Godot API primitives, runs inside the isolated AssemblyLoadContext,
-// just a foundation for the API.
-public static class API
+// primitives surface for API
+// NO overloading.
+// needs matching thing in GodotBridge
+// lazily resolved/built
+public static class Primitives
 {
-    private static SceneTree? _sceneTree;
+    private const BindingFlags Inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+    private const BindingFlags Stat = BindingFlags.Public | BindingFlags.Static;
 
-    public static bool IsReady => _sceneTree != null;
-
-    internal static void Bootstrap(GodotObject anyBridgeInstance)
-    {
-        if (_sceneTree != null) return; // only need to do this once, ever
+    // Godot objects (property/method system)
+    public static object? Get(GodotObject instance, string propertyName)
+        => FromVariant(instance.GetIndexed(propertyName));
  
-        try
-        {
-            _sceneTree = (SceneTree)Engine.GetMainLoop();
-            Log("bootstrapped, SceneTree acquired");
-        }
-        catch (Exception ex)
-        {
-            Log($"Bootstrap failed: {ex.GetType().Name}: {ex.Message}");
-            throw;
-        }
-    }
-
-    private static void Log(string message) => Logger.Write(nameof(API), message);
-
-    public static SceneTree SceneTree
-        => _sceneTree ?? throw new InvalidOperationException("GodotAPI is not bootstrapped!");
-
-    public static Node Root => SceneTree.Root;
-
-    // if instance is, true, if not, value, using the 'is' keyword
-    public static bool IsGodotObject(object? instance) => instance is GodotObject;
-
-    public static Node[] GetChildren(Node node) => [.. node.GetChildren()];
-
-    // BFS, not the fastest but it works compared to earlier attempts. Just a 
-    // generic fallback until real caller needs point at something more
-    // specific. Change later with proper API.
-    public static Node? FindNodeByTypeName(Node root, string typeName)
-    {
-        Queue<Node> queue = new();
-        queue.Enqueue(root);
-
-        while (queue.Count > 0)
-        {
-            Node node = queue.Dequeue();
-
-            if (node.GetType().Name == typeName)
-                return node;
-
-            foreach (Node child in node.GetChildren()) 
-                queue.Enqueue(child);
-        }
-
-        return null; // not found
-    }
-
-    // add more shit later
-
-    public static Color MakeColor(string hex) => new(hex);
+    public static void Set(GodotObject instance, string propertyName, object? value)
+        => instance.SetIndexed(propertyName, ToVariant(value));
+ 
+    public static object? Call(GodotObject instance, string methodName, object?[] args)
+        => FromVariant(instance.Call(methodName, args.Select(ToVariant).ToArray()));
+ 
+    public static void CallDeferred(GodotObject instance, string methodName, object?[] args)
+        => instance.CallDeferred(methodName, args.Select(ToVariant).ToArray());
  
     public static GodotObject Instantiate(string className)
     {
@@ -75,36 +39,136 @@ public static class API
             ?? throw new Exception($"ClassDB.Instantiate({className}) returned null/non-object!");
     }
  
-    public static void Set<T>(GodotObject instance, string propertyName, T value) where T : notnull
-        => instance.Set(propertyName, Variant.From(value));
- 
-    public static Variant Get(GodotObject instance, string propertyName)
-        => instance.Get(propertyName);
- 
-    public static Variant Call(GodotObject instance, string methodName, params Variant[] args)
-        => instance.Call(methodName, args);
- 
-    public static void AddChildDeferred(Node parent, Node child)
-        => parent.CallDeferred("add_child", child);
-}
+    public static bool IsInstanceValid(GodotObject instance)
+        => GodotObject.IsInstanceValid(instance);
 
-// What Loader talks to via reflection, just relays a live instance into
-// API.Bootstrap the first time one shows up.
-public static class GodotAPIHost
-{
-    public static void Initialize() => Logger.Write(nameof(GodotAPIHost), "Initialized, ready to receive relayed instances!");
+    // signals
 
-    public static void OnInstanceRelayed(object instance)
+    // remembers the Callable made per (object, signal, handler) so Disconnect
+    // hands godot that exact one back
+    private static readonly Dictionary<(GodotObject, string, Delegate), Callable> _connections = new();
+
+    // handler gets the signals args as an array (empty if none)
+    public static unsafe void Connect(GodotObject instance, string signalName, Action<object?[]> handler)
     {
-        try
+        if (!instance.HasSignal(signalName))
+            throw new ArgumentException($"{instance.GetType().Name} has no signal '{signalName}'");
+
+        var callable = Callable.CreateWithUnsafeTrampoline(handler, &SignalTrampoline);
+
+        lock (_connections) _connections[(instance, signalName, handler)] = callable;
+        instance.Connect(signalName, callable);
+    }
+
+    // Godot calls this with as many args the signal has
+    private static void SignalTrampoline(object delegateObj, NativeVariantPtrArgs args, out godot_variant ret)
+    {
+        var values = new object?[args.Count];
+        for (int i = 0; i < values.Length; i++)
+            values[i] = FromVariant(Variant.CreateCopyingBorrowed(args[i]));
+
+        try { ((Action<object?[]>)delegateObj)(values); }
+        catch (Exception e) { Logger.Write(nameof(Primitives), $"signal handler threw: {e}"); }
+
+        ret = default;
+    }
+
+    public static void Disconnect(GodotObject instance, string signalName, Action<object?[]> handler)
+    {
+        Callable callable;
+        lock (_connections)
         {
-            if (instance is Godot.GodotObject godotObj)
-                API.Bootstrap(godotObj);
+            if (!_connections.Remove((instance, signalName, handler), out callable)) return; // never connected
         }
-        catch (Exception e)
+        instance.Disconnect(signalName, callable);
+    }
+
+    // static stuff
+
+    public static object? CallStatic(string typeName, string methodName, object?[] args)
+    {
+        var result = ResolveType(typeName).InvokeMember(methodName,
+            BindingFlags.InvokeMethod | BindingFlags.OptionalParamBinding | Stat, null, null, args);
+        return result is Variant v ? FromVariant(v) : result;
+    }
+ 
+    public static object? GetStatic(string typeName, string memberName)
+    {
+        var result = ResolveType(typeName).InvokeMember(memberName,
+            BindingFlags.GetField | BindingFlags.GetProperty | Stat, null, null, null);
+        return result is Variant v ? FromVariant(v) : result;
+    }
+ 
+    public static void SetStatic(string typeName, string memberName, object? value)
+        => ResolveType(typeName).InvokeMember(memberName,
+            BindingFlags.SetField | BindingFlags.SetProperty | Stat, null, null, [value]);
+
+    // builders/constructors
+
+    public static object Construct(string typeName, object?[] args)
+        => Activator.CreateInstance(ResolveType(typeName), args)
+            ?? throw new Exception($"could not construct {typeName}");
+
+    // non-godot
+
+    public static object? GetMember(object instance, string name)
+        => instance.GetType().InvokeMember(name,
+            BindingFlags.GetField | BindingFlags.GetProperty | Inst, null, instance, null);
+ 
+    public static void SetMember(object instance, string name, object? value)
+        => instance.GetType().InvokeMember(name,
+            BindingFlags.SetField | BindingFlags.SetProperty | Inst, null, instance, [value]);
+ 
+    public static object? CallMember(object instance, string name, object?[] args)
+        => instance.GetType().InvokeMember(name,
+            BindingFlags.InvokeMethod | BindingFlags.OptionalParamBinding | Inst, null, instance, args);
+
+    // threading
+
+    // runs on Godot main thread, next idle moment, safe to call from any thread
+    public static void RunOnMainThread(Action action)
+        => Callable.From(action).CallDeferred();
+
+    // internals
+
+    // searches only the isolated context
+    private static Type ResolveType(string typeName)
+    {
+        var isolated = AssemblyLoadContext.GetLoadContext(typeof(Primitives).Assembly)!;
+ 
+        foreach (var asmName in new[] { "GodotSharp", "Mnemonimov", "Asm" })
         {
-            Logger.Write(nameof(GodotAPIHost), "OnInstanceRelayed failed: " + e);
+            var asm = isolated.Assemblies.FirstOrDefault(a => a.GetName().Name == asmName);
+            var type = asm?.GetType(typeName);
+            if (type != null) return type;
         }
+ 
+        throw new Exception($"type {typeName} not found in GodotSharp/Mnemonimov/Asm");
+    }
+
+    // Godot => C#
+    private static object? FromVariant(Variant v) => v.VariantType switch
+    {
+        Variant.Type.Array => v.AsGodotArray().Select(x => FromVariant(x)).ToArray(),
+        Variant.Type.Dictionary => v.AsGodotDictionary().ToDictionary(kv => FromVariant(kv.Key)!, kv => FromVariant(kv.Value)),
+        _ => v.Obj,
+    };
+
+    // C# => Godot
+    private static Variant ToVariant(object? value) => value switch
+    {
+        null => new Variant(),
+        object?[] arr => Variant.From(new Godot.Collections.Array(arr.Select(x => ToVariant(x)))),
+        Dictionary<object, object?> dict => Variant.From(ToGodotDict(dict)),
+        _ => Variant.From((dynamic)value),
+    };
+
+    private static Godot.Collections.Dictionary ToGodotDict(Dictionary<object, object?> dict)
+    {
+        var result = new Godot.Collections.Dictionary();
+        foreach (var kv in dict)
+            result[ToVariant(kv.Key)] = ToVariant(kv.Value);
+        return result;
     }
 }
 

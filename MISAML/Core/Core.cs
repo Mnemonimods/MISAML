@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using Godot;
 using HarmonyLib;
 
@@ -357,6 +358,115 @@ public readonly struct HookResult
 
     // creates a result that skips the original method and uses this value.
     public static HookResult Replace(object? value) => new() { SkipOriginal = true, Value = value };
+}
+
+public static class GodotBridge
+{
+    private static void Log(string message) => StartupHook.Log(nameof(GodotBridge), message);
+
+    private static Assembly? _isolatedApi;
+    private static readonly Dictionary<string, MethodInfo> _cache = new();
+    private static readonly object _lock = new();
+
+    // loader calls this once it has the isolated context MISAML.GodotAPI.dll
+    // ref, no resolving w/ this
+    public static void Bind(Assembly isolatedApi) => _isolatedApi = isolatedApi;
+
+    // first use of a primitive looks it up by name and caches MethodInfo
+    private static MethodInfo Resolve(string name)
+    {
+        lock (_lock)
+        {
+            if (_cache.TryGetValue(name, out var cached)) return cached;
+            if (_isolatedApi == null) throw new InvalidOperationException("GodotBridge.Bind() has not run yet!");
+
+            var type = _isolatedApi.GetType("MISAML.GodotAPI.Primitives")
+                ?? throw new Exception("MISAML.GodotAPI.Primitives not found!");
+            
+            var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.Static)
+                ?? throw new Exception($"Primitives.{name} not found!");
+
+            _cache[name] = method;
+            Log($"resolved {name} (first use)");
+            return method;
+        }
+    }
+
+    // unwrap anything wrapped in TargetInvocationExpection, some primitives wrap
+    // them another time (InvokeMember ones), unwrap every layer here
+    private static object? Invoke(string name, params object?[] args)
+    {
+        try { return Resolve(name).Invoke(null, args); }
+        catch (TargetInvocationException e)
+        {
+            Exception ue = e;
+            while (ue is TargetInvocationException t && t.InnerException != null)
+                ue = t.InnerException;
+
+            ExceptionDispatchInfo.Capture(ue).Throw();
+            throw; // unreachable
+        }
+    }
+
+    // Godot objects
+    public static object? Get(object instance, string propertyName) => Invoke(nameof(Get), instance, propertyName);
+    public static void Set(object instance, string propertyName, object? value) => Invoke(nameof(Set), instance, propertyName, value);
+    public static object? Call(object instance, string methodName, params object?[] args) => Invoke(nameof(Call), instance, methodName, args);
+    public static void CallDeferred(object instance, string methodName, params object?[] args) => Invoke(nameof(CallDeferred), instance, methodName, args);
+    public static object Instantiate(string className) => Invoke(nameof(Instantiate), className)!;
+    public static bool IsInstanceValid(object instance) => (bool)Invoke(nameof(IsInstanceValid), instance)!;
+
+    // signals (handler gets signals args, empty if none)
+    public static void Connect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Connect), instance, signalName, handler);
+    public static void Disconnect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Disconnect), instance, signalName, handler);
+
+    // static
+    public static object? CallStatic(string typeName, string methodName, params object?[] args) => Invoke(nameof(CallStatic), typeName, methodName, args);
+    public static object? GetStatic(string typeName, string memberName) => Invoke(nameof(GetStatic), typeName, memberName);
+    public static void SetStatic(string typeName, string memberName, object? value) => Invoke(nameof(SetStatic), typeName, memberName, value);
+
+    // builders
+    public static object Construct(string typeName, params object?[] args) => Invoke(nameof(Construct), typeName, args)!;
+
+    // non-Godot stuff
+    public static object? GetMember(object instance, string name) => Invoke(nameof(GetMember), instance, name);
+    public static void SetMember(object instance, string name, object? value) => Invoke(nameof(SetMember), instance, name, value);
+    public static object? CallMember(object instance, string name, params object?[] args) => Invoke(nameof(CallMember), instance, name, args);
+
+    // threading
+    public static void RunOnMainThread(Action action) => Invoke(nameof(RunOnMainThread), action);
+
+    // ready hook
+    // mods load VERY early, before scene tree exists, so any mod that wants to
+    // touch Godot does it inside of OnReady, runs on the main thread
+    private static readonly List<Action> _readyActions = new();
+    private static bool _ready;
+
+    public static void OnReady(Action action)
+    {
+        lock (_lock) { if (!_ready) { _readyActions.Add(action); return; } }
+        RunOnMainThread(action); // already ready, run now
+    }
+
+    // loader calls this once, the first time the game calls into a bridge method
+    public static void RaiseReady()
+    {
+        List<Action> run;
+        lock (_lock)
+        {
+            if (_ready) return;
+            _ready = true;
+            run = [.. _readyActions];
+            _readyActions.Clear();
+        }
+ 
+        RunOnMainThread(() =>
+        {
+            foreach (var a in run)
+                try { a(); } catch (Exception e) { Log($"ready handler threw: {e}"); }
+        });
+    }
+
 }
 
 // MISAML's own bootstrap stuff, not mod-facing, patches all of Mnemonimov's

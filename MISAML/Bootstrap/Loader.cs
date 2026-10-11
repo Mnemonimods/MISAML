@@ -74,9 +74,6 @@ public static class Loader
     // the first handoff finishes
     private static int _handoffStarted = 0;
 
-    // cached once, reused for all event firing (bridge or other)
-    private static MethodInfo? _relayMethod;
-
     // Called once, directly by the Rust shim via coreclr_create_delegate
     public static void Handoff()
     {
@@ -134,26 +131,15 @@ public static class Loader
                 throw new Exception($"MISAML.GodotAPI.dll not found at {payloadPath}");
 
             var isolatedPayload = isolatedContext.LoadFromAssemblyPath(payloadPath);
+            MISAML.Core.GodotBridge.Bind(isolatedPayload);
+            Log("primitives bound");
 
-            var APIHostType = isolatedPayload.GetType("MISAML.GodotAPI.GodotAPIHost")
-                ?? throw new Exception("GodotAPIHost type not found in MISAML.GodotAPI.GodotAPIHost");
+            // fire OnReady the first time the game calls into one of its bridge methods
+            MISAML.Core.GodotBridgePatch.OnBridgeInstanceSeen += OnFirstBridgeCall;
 
-            var initMethod = APIHostType.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)
-                ?? throw new Exception("GodotAPIHost.Initialize not found");
-
-            initMethod.Invoke(null, null);
-
-            // cache the relay target once so every future firing can call .Invoke
-            // on the same MethodInfo
-            _relayMethod = APIHostType.GetMethod("OnInstanceRelayed", BindingFlags.Public | BindingFlags.Static)
-                ?? throw new Exception("GodotAPIHost.OnInstanceRelayed not found");
-            
-            Log("isolated context GodotAPIHost ready!");
-
-            // Setup the relay, every time a bridge method fires in the Default
-            // context StartupHook/BridgePatch, hand the live instance across
-            // to GodotAPIHost via the cached MethodInfo
-            MISAML.Core.GodotBridgePatch.OnBridgeInstanceSeen += RelayToIsolatedContext;
+            var baseDir = Path.GetDirectoryName(typeof(Loader).Assembly.Location)!;
+            var modsDir = Path.GetFullPath(Path.Combine(baseDir, "..", "mods"));
+            ModLoader.LoadMods(modsDir, Log);
         }
         catch (Exception e)
         {
@@ -161,17 +147,14 @@ public static class Loader
         }
     }
 
-    private static void RelayToIsolatedContext(object instance)
+    private static void OnFirstBridgeCall(object instance)
     {
-        try
-        {
-            _relayMethod?.Invoke(null, [instance]);
-        }
-        catch (Exception e)
-        {
-            Log("[MISAML.Bootstrap] relay invoke failed: " + e);   
-        }
+        // game is running, tree exists
+        MISAML.Core.GodotBridgePatch.OnBridgeInstanceSeen -= OnFirstBridgeCall;
+        MISAML.Core.GodotBridge.RaiseReady();
     }
 
     private static readonly System.Diagnostics.Stopwatch _stopwatch = System.Diagnostics.Stopwatch.StartNew();
 }
+
+public record ModStatus(string Id, string Name, string Version, bool Enabled, bool Loaded, string? Error);

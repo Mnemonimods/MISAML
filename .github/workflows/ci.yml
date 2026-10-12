@@ -2,12 +2,16 @@ name: ci-rust-and-csharp
 
 on:
   pull_request:
-    branches:
-      - main
-      - dev
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ci-${{github.event.pull_request.number }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -18,8 +22,17 @@ env:
 
 jobs:
   build-rust:
-    name: Build Rust
-    runs-on: ubuntu-22.04
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            experimental: false
+          - os: windows-latest
+            experimental: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,17 +42,24 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
       - name: Check formatting
         run: cargo fmt --all --check
-        continue-on-error: true
-      #Ideally this wouldn't be here, but I really don't wanna spend time fixing stinky rust
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked
 
       - name: Build
         run: cargo build --release --locked
-  
+
+      - name: Test
+        run: cargo test --locked
+
   build-csharp:
-    name: Build C#
-    runs-on: ubuntu-22.04
+    name: C#
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4

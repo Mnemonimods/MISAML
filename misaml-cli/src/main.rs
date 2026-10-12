@@ -1,10 +1,26 @@
 use std::{
-    os::unix::process::CommandExt,
-    path::{Path, PathBuf},
-    process::Command,
+    collections::BTreeMap, os::unix::process::CommandExt, path::{Path, PathBuf}, process::Command,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
+use serde::Deserialize;
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct Config {
+    debug: bool,
+    force: bool,
+    mods: BTreeMap<String, bool>
+}
+
+// Hashes for supported Mnemonimov.dll version.
+const SUPPORTED_HASHES: &[(&str, &str)] = &[
+    /* 2026-10-12 Linux */
+    ("Mnemonimov.dll", "5111b0825cb5919c5a8fcc30717b2c0f"),
+    ("Asm.dll", "173d587f1dd59340138f8bb06f7f1f7c"),
+    ("GodotSharp.dll", "16dbe046b79ca898d2debefb1709906d"),
+    ("mnemonimov.x86_64", "6c9c48cb4cf2f00d7bec39d0c491c32d"),
+];
 
 const MNEMONIMOV_APP_ID: u32 = 3854110;
 const BUILD_ID: &str = env!("CARGO_PKG_VERSION");
@@ -15,6 +31,7 @@ mod platform {
     pub const RUNTIME_PACKAGE: &str = "win-x64.zip";
     pub const GAME_EXE: &str = "mnemonimov.exe";
     pub const SHIM_NAME: &str = "libmisaml_shim.dll";
+    pub const DATA_DIR: &str = "data_Mnemonimov_windows_x86_64";
 }
 
 #[cfg(target_os = "linux")]
@@ -22,6 +39,7 @@ mod platform {
     pub const RUNTIME_PACKAGE: &str = "linux-x64.tar.gz";
     pub const GAME_EXE: &str = "mnemonimov.x86_64";
     pub const SHIM_NAME: &str = "libmisaml_shim.so";
+    pub const DATA_DIR: &str = "data_Mnemonimov_linuxbsd_x86_64";
 }
 
 macro_rules! debug_log {
@@ -38,17 +56,160 @@ macro_rules! log {
     };
 }
 
+const DEFAULT_CONFIG: &str = "\
+# MISAML Configuration
+
+# Verbose logs for debugging
+debug = false
+
+# Force-launch the game even if untested
+force = false
+
+# Mods set to \"false\" are skipped, mods not listed here load normally.
+# (the name is the \"id\" from the mod's manifest).
+[mods]
+";
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    let force = args.iter().any(|a| a == "--force");
 
     match args.get(1).map(String::as_str) {
         Some("inspect-pck") => cmd_inspect_pck(args.get(2)),
         Some("extract-pck") => cmd_extract_pck(args.get(2), args.get(3)),
-        _ => cmd_launch(),
+        _ => cmd_launch(force),
     }
 }
 
-fn cmd_launch() -> Result<()> {
+fn load_config(misaml_dir: &Path) -> Result<Config> {
+    let path = misaml_dir.join("misaml.toml");
+
+    if !path.exists() {
+        match std::fs::write(&path, DEFAULT_CONFIG) {
+            Ok(()) => {
+                log!("Created default config file at {}", path.display());
+            }
+            Err(e) => {
+                log!("could not create {} ({e}), using defaults", path.display());
+                return Ok(Config::default());
+            }
+        }
+    }
+
+    if let Err(e) = sync_mods(&path, &misaml_dir.join("mods")) {
+        log!("could not update {}: {e:#}", path.display());
+    }
+
+    let text = std::fs::read_to_string(&path)?;
+
+    toml::from_str(&text).with_context(|| format!("bad config at {}", path.display()))
+}
+
+// makes sure every installed mod has a line in the [mods] table of misaml.toml,
+// new mods are added as `true`.
+fn sync_mods(config_path: &Path, mods_dir: &Path) -> Result<()> {
+    let text = std::fs::read_to_string(config_path)?;
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .with_context(|| format!("bad config at {}", config_path.display()))?;
+
+    if !doc.contains_key("mods") {
+        doc["mods"] = toml_edit::table();
+    }
+    let mods = doc["mods"]
+        .as_table_mut()
+        .context("[mods] in misaml.toml must be a table")?;
+
+    // the id of every mod folder that has a readable mod.json
+    let mut installed = Vec::new();
+    if mods_dir.is_dir() {
+        for entry in std::fs::read_dir(mods_dir)? {
+            let manifest = entry?.path().join("mod.json");
+            if !manifest.is_file() {
+                continue;
+            }
+
+            let id = std::fs::read_to_string(&manifest)
+                .ok()
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                .and_then(|v| v["id"].as_str().map(String::from));
+
+            match id {
+                Some(id) => installed.push(id),
+                None => {
+                    log!("could not read a mod id from {}", manifest.display());
+                }
+            }
+        }
+    }
+    installed.sort();
+
+    let mut added = Vec::new();
+    for id in &installed {
+        if !mods.contains_key(id) {
+            mods.insert(id, toml_edit::value(true));
+            added.push(id.as_str());
+        }
+    }
+
+    // listed in the file but no longer installed, tell the user, don't delete
+    for (key, _) in mods.iter() {
+        if !installed.iter().any(|id| id == key) {
+            log!("misaml.toml lists '{key}' but no installed mod has that id");
+        }
+    }
+
+    if !added.is_empty() {
+        std::fs::write(config_path, doc.to_string())?;
+        log!("Added to misaml.toml: {}", added.join(", "));
+    }
+
+    Ok(())
+}
+
+fn check_game_ver(game_dir: &Path, force: bool) -> Result<()> {
+    let data_dir = game_dir.join(platform::DATA_DIR);
+    let mut mismatch = Vec::new();
+
+    for (name, expected) in SUPPORTED_HASHES {
+        // the executable sits in the game folder, the dlls in the data folder
+        let path = if *name == platform::GAME_EXE {
+            game_dir.join(name)
+        } else {
+            data_dir.join(name)
+        };
+        require_exists(&path, name)?;
+
+        let hash = format!("{:x}", md5::compute(std::fs::read(&path)?));
+
+        if hash == *expected {
+            debug_log!("{name} matches");
+        } else {
+            mismatch.push(format!("{name} (found {hash})"));
+        }
+    }
+
+    if mismatch.is_empty() {
+        return Ok(());
+    }
+
+    if force {
+        log!(
+            "WARNING: untested game files, launcing anyways: {}",
+            mismatch.join(", ")
+        );
+        return Ok(());
+    }
+
+    bail!(
+        "this version of Mnemonimov isn't supported by MISAML {BUILD_ID}. \
+         These files changed: {}. The game probably updated. \
+         Run with --force to launch anyway at your own risk.",
+        mismatch.join(", ")
+    );
+}
+
+fn cmd_launch(force: bool) -> Result<()> {
     let game_dir =
         find_game_dir().context("could not find Mnemonimov, is it installed via Steam?")?;
 
@@ -58,6 +219,11 @@ fn cmd_launch() -> Result<()> {
     require_exists(&exe_path, platform::GAME_EXE)?;
 
     let misaml_dir = own_install_dir().context("could not find misaml-cli directory")?;
+
+    let config = load_config(&misaml_dir)?;
+
+    check_game_ver(&game_dir, force || config.force)?;
+    
     let payload_dir = misaml_dir.join("MISAML");
 
     ensure_runtime(&payload_dir)?;
@@ -74,12 +240,23 @@ fn cmd_launch() -> Result<()> {
     log!("  core: {}", payload_dir.display());
     log!("  framework: {}", framework_dir.display());
 
-    let err = Command::new(&exe_path)
-        .current_dir(&game_dir)
+    let disabled: Vec<&str> = config
+        .mods
+        .iter()
+        .filter(|(_, on)| !**on)
+        .map(|(id, _)| id.as_str())
+        .collect();
+
+    let mut cmd = Command::new(&exe_path); 
+    cmd.current_dir(&game_dir)
         .env("LD_PRELOAD", &shim_path)
         .env("MISAML_CORE_DIR", &payload_dir)
         .env("MISAML_FRAMEWORK_DIR", &framework_dir)
-        .exec();
+        .env("MISAML_DISABLED_MODS", disabled.join(","));
+    if config.debug {
+        cmd.env("MISAML_DEBUG", "1");
+    }
+    let err = cmd.exec();
 
     Err(anyhow!(err).context(format!("failed to launch {}", exe_path.display())))
 }

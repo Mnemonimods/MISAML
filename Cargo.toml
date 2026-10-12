@@ -5,3 +5,9 @@ members = [
     "misaml-cli", 
     "misaml-pck",
 ]
+
+[profile.release]
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

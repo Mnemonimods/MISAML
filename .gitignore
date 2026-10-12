@@ -21,6 +21,7 @@ target/
 godot-*/
 **/vendor/
 test.md
+.idea
 
-# BYO GodotSharp.dll, please! (it's in the game directory, too)
+# BYO GodotSharp.dll, please! (it's in the game directory, too), if installing the GodotSharp.dll from Nuget, the package version is 4.5.1
 MISAML.Core/vendor/GodotSharp.dll 

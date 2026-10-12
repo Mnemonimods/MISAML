@@ -17,7 +17,7 @@ namespace MISAML.GodotAPI;
 public static class Primitives
 {
     private const BindingFlags Inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-    private const BindingFlags Stat = BindingFlags.Public | BindingFlags.Static;
+    private const BindingFlags Stat = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
 
     // Godot objects (property/method system)
     public static object? Get(GodotObject instance, string propertyName)
@@ -63,14 +63,38 @@ public static class Primitives
     // Godot calls this with as many args the signal has
     private static void SignalTrampoline(object delegateObj, NativeVariantPtrArgs args, out godot_variant ret)
     {
-        var values = new object?[args.Count];
-        for (int i = 0; i < values.Length; i++)
-            values[i] = FromVariant(Variant.CreateCopyingBorrowed(args[i]));
+        var values = Unpack(args);
 
         try { ((Action<object?[]>)delegateObj)(values); }
         catch (Exception e) { Logger.Write(nameof(Primitives), $"signal handler threw: {e}"); }
 
         ret = default;
+    }
+
+    // create a Callable that runs a C# function, any number of args, can return a value
+    public static unsafe object CreateCallable(Func<object?[], object?> function)
+        => Callable.CreateWithUnsafeTrampoline(function, &FunctionTrampoline);
+
+    private static void FunctionTrampoline(object delegateObj, NativeVariantPtrArgs args, out godot_variant ret)
+    {
+        try
+        {
+            var result = ((Func<object?[], object?>)delegateObj)(Unpack(args));
+            ret = ToVariant(result).CopyNativeVariant();
+        }
+        catch (Exception e)
+        {
+            Logger.Write(nameof(Primitives), $"callable threw: {e}");
+            ret = default;
+        }
+    }
+
+    private static object?[] Unpack(NativeVariantPtrArgs args)
+    {
+        var values = new object?[args.Count];
+        for (int i = 0; i < values.Length; i++)
+            values[i] = FromVariant(Variant.CreateCopyingBorrowed(args[i]));
+        return values;
     }
 
     public static void Disconnect(GodotObject instance, string signalName, Action<object?[]> handler)

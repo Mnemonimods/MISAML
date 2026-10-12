@@ -132,7 +132,6 @@ public static class Loader
 
             var isolatedPayload = isolatedContext.LoadFromAssemblyPath(payloadPath);
             MISAML.Core.GodotBridge.Bind(isolatedPayload);
-            Log("primitives bound");
 
             // fire OnReady the first time the game calls into one of its bridge methods
             MISAML.Core.GodotBridgePatch.OnBridgeInstanceSeen += OnFirstBridgeCall;

@@ -34,9 +34,9 @@ public static class ModLoader
       "id": "example-mod",
       "name": "example mod",
       "version": "1.0.0",
+      "description": "Hi this is a description :3",
       "entryAssembly": "examplemod.dll",
-      "script": "main.gd",
-      "enabled": true
+      "entryScript": "main.gd"
     }
     */
     private record ModManifest(
@@ -45,8 +45,7 @@ public static class ModLoader
         string Version, 
         string? Description, 
         string? EntryAssembly, 
-        string? EntryScript, 
-        bool Enabled
+        string? EntryScript
     );
 
     public static void LoadMods(string modsDir, Action<string> log)
@@ -77,6 +76,9 @@ public static class ModLoader
                 return null; // not found
             };
         }
+
+        var disabled = (Environment.GetEnvironmentVariable("MISAML_DISABLED_MODS") ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries);
 
         foreach (var modDir in Directory.GetDirectories(modsDir))
         {
@@ -114,7 +116,7 @@ public static class ModLoader
                 continue;
             }
 
-            if (!manifest.Enabled)
+            if (disabled.Contains(manifest.Id))
             {
                 _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null, manifest.Description));
                 log($"{manifest.Id}: disabled, not loading");
@@ -190,13 +192,13 @@ public static class ModLoader
             var instance = GodotBridge.Call(script, "new")!;
             _scriptInstances.Add(instance);
             GodotBridge.Call(instance, "set_meta", "mod_dir", modDir);
+            GodotBridge.Call(instance, "set_meta", "misaml", GodotBridge.ScriptApi);
 
             if (Equals(GodotBridge.Call(instance, "is_class", "Node"), true))
             {
                 var tree = GodotBridge.CallStatic("Godot.Engine", "GetMainLoop")!;
                 var root = GodotBridge.Get(tree, "root")!;
                 GodotBridge.Call(root, "add_child", instance);
-                log($"{manifest.Id}: script running");
             }
             else
             {

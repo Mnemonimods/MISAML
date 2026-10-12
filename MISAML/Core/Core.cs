@@ -387,7 +387,7 @@ public static class GodotBridge
                 ?? throw new Exception($"Primitives.{name} not found!");
 
             _cache[name] = method;
-            Log($"resolved {name} (first use)");
+            StartupHook.DebugLog($"resolved {name}");
             return method;
         }
     }
@@ -418,6 +418,41 @@ public static class GodotBridge
 
     // signals (handler gets signals args, empty if none)
     public static void Connect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Connect), instance, signalName, handler);
+    public static object CreateCallable(Func<object?[], object?> function) => Invoke(nameof(CreateCallable), function)!;
+
+    // bridge for GDScript -> C#
+    private static readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
+    {
+        ["log"] = args => { StartupHook.Log("Script", string.Join(" ", args)); return null; },
+    };
+
+    private static object? _scriptApi;
+
+    public static void Expose(string name, Func<object?[], object?> function)
+    {
+        lock (_lock) _exposed[name] = function;
+    }
+
+    // built the first time something asks for it
+    public static object ScriptApi
+    {
+        get { lock (_lock) return _scriptApi ??= CreateCallable(CallExposed); }
+    }
+
+    private static object? CallExposed(object?[] args)
+    {
+        if (args.Length == 0 || args[0] is not string name)
+            throw new ArgumentException("misaml.call needs a function name as the first argument");
+
+        Func<object?[], object?>? function;
+        lock (_lock) _exposed.TryGetValue(name, out function);
+
+        if (function == null)
+            throw new ArgumentException($"nothing exposed as '{name}'");
+
+        return function(args[1..]);
+    }
+
     public static void Disconnect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Disconnect), instance, signalName, handler);
 
     // static

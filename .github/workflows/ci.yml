@@ -24,6 +24,7 @@ jobs:
   build-rust:
     name: Rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
@@ -60,6 +61,7 @@ jobs:
   build-csharp:
     name: C#
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,3 +79,6 @@ jobs:
 
       - name: Build
         run: dotnet build MISAML.slnx --no-restore --configuration Release -warnaserror
+
+      - name: Build dist
+        run: ./build.sh build

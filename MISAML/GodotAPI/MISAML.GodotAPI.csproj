@@ -6,9 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="GodotSharp">
-      <HintPath>../vendor/GodotSharp.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+    <PackageReference Include="GodotSharp" Version="4.5.1" />
   </ItemGroup>
 </Project>

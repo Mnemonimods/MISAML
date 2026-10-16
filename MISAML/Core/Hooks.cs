@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using Godot;
 using HarmonyLib;
 
 namespace MISAML.Core;
@@ -23,13 +22,13 @@ public static class Hooks
 {
     // setup Log for Hooks
     private static void Log(string message) => StartupHook.Log(nameof(Hooks), message);
- 
+
     // Harmony instance used for all MISAML patches.
     internal static readonly Harmony Harmony = new("MISAML");
- 
+
     // lower runs first
     public const int DefaultPriority = 100;
- 
+
     // one handler in a chain. Owner is only used for log messages.
     private sealed record Registration(
         Func<object?, object?[], HookResult> Handler,
@@ -46,7 +45,7 @@ public static class Hooks
     // protects building a new chain from concurrent registrations
     private static readonly object ChainLock = new();
     private static long _nextOrder;
-    
+
     // deduplication set for patched methods/Harmony targets.
     private static readonly HashSet<string> PatchedKeys = [];
 
@@ -61,8 +60,8 @@ public static class Hooks
     // same signature mods were already compiled against, so existing mods keep
     // working
     public static void Register(
-        string typeName, 
-        string methodName, 
+        string typeName,
+        string methodName,
         Func<object?, object?[], HookResult> handler
     ) => Register(typeName, methodName, handler, DefaultPriority);
 
@@ -170,7 +169,7 @@ public static class Hooks
     private static MethodInfo? FindMethodIn(Assembly asm, string typeName, string methodName)
     {
         var type = asm.GetType(typeName);
-        
+
         return type?.GetMethod(
             methodName,
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static

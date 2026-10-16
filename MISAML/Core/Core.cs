@@ -1,12 +1,12 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
-using Godot;
 using HarmonyLib;
+using MISAML.Debug;
 
 namespace MISAML.Core;
 
@@ -14,7 +14,7 @@ namespace MISAML.Core;
 // Purpose: always hook GodotBridgePatch when Mnemonimov loads (bootstrap),
 // and if MISAML_DEBUG=1, run the MISAML.Debug methods.
 public static class StartupHook
-{   
+{
     // path for log file
     private static readonly string LogPath = Path.Combine(
         Path.GetDirectoryName(typeof(StartupHook).Assembly.Location)!, /* null forgiving, location can be null */
@@ -22,11 +22,11 @@ public static class StartupHook
     );
 
     // one timer for the entire MISAML.Core/StartupHook thingy
-    private static readonly System.Diagnostics.Stopwatch _stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    private static readonly Stopwatch _stopwatch = Stopwatch.StartNew();
 
     // just check env for debug logging
-    internal static readonly bool DebugEnabled 
-        = System.Environment.GetEnvironmentVariable("MISAML_DEBUG") != null;
+    internal static readonly bool DebugEnabled
+        = Environment.GetEnvironmentVariable("MISAML_DEBUG") != null;
 
     internal static void Log(string @class, string message)
     {
@@ -65,18 +65,18 @@ public static class StartupHook
             switch (loadedName)
             {
                 case "Asm":
-                    RunSearch("Asm", Debug.Asm.Run(Hooks.Harmony, assembly));
+                    RunSearch("Asm", Asm.Run(Hooks.Harmony, assembly));
                     break;
                 case "Mnemonimov":
-                    RunSearch("Bridge", Debug.Bridge.Run(Hooks.Harmony, assembly));
-                    RunSearch("Mnemonimov", Debug.Mnemonimov.Run(Hooks.Harmony, assembly));
+                    RunSearch("Bridge", Bridge.Run(Hooks.Harmony, assembly));
+                    RunSearch("Mnemonimov", Mnemonimov.Run(Hooks.Harmony, assembly));
                     break;
                 case "GodotSharp":
-                    RunSearch("GodotSharp", Debug.GodotSharp.Run(Hooks.Harmony, assembly));
+                    RunSearch("GodotSharp", GodotSharp.Run(Hooks.Harmony, assembly));
                     break;
             }
         }
- 
+
         // subscribe FIRST so nothing loading from this point onwards can slip
         // through the gap between  "check what's loaded" and "start listening"
         AppDomain.CurrentDomain.AssemblyLoad += (sender, args) =>
@@ -88,12 +88,12 @@ public static class StartupHook
         // and finished before we could listen for it, and it never loaded
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             HandleAssembly(assembly);
- 
+
         Log(nameof(StartupHook), "MISAML.Core startup complete.");
     }
 
     //TODO: Add individual timestamping for each method ran in MISAML.Debug
-    private static void RunSearch(string label, MISAML.Debug.SearchResult result)
+    private static void RunSearch(string label, SearchResult result)
     {
         Log(
             label,
@@ -146,7 +146,7 @@ public static class GodotBridge
 
             var type = _isolatedApi.GetType("MISAML.GodotAPI.Primitives")
                 ?? throw new Exception("MISAML.GodotAPI.Primitives not found!");
-            
+
             var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.Static)
                 ?? throw new Exception($"Primitives.{name} not found!");
 
@@ -258,7 +258,7 @@ public static class GodotBridge
             run = [.. _readyActions];
             _readyActions.Clear();
         }
- 
+
         RunOnMainThread(() =>
         {
             foreach (var a in run)

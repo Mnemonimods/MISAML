@@ -3,7 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-
+  
   <ItemGroup>
     <Compile Remove="Bootstrap/**/*.cs" />
     <Compile Remove="Bootstrap/**/obj/**/*.cs" />
@@ -14,12 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="GodotSharp" Version="4.5.1" />
     <PackageReference Include="ILRepack" Version="2.0.48">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Lib.Harmony" Version="2.4.2" />
-    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
   </ItemGroup>
 
   <ItemGroup>

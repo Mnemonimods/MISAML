@@ -41,10 +41,10 @@ public static class ModLoader
     */
     private record ModManifest(
         string Id,
-        string Name, 
-        string Version, 
-        string? Description, 
-        string? EntryAssembly, 
+        string Name,
+        string Version,
+        string? Description,
+        string? EntryAssembly,
         string? EntryScript
     );
 
@@ -138,7 +138,7 @@ public static class ModLoader
             {
                 // one broken mod never takes others down with it, Invoke()
                 // wraps errors, show the real one
-                var ue = e is TargetInvocationException { InnerException: {} inner } ? inner : e;
+                var ue = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
                 err = $"{ue.GetType().Name}: {ue.Message}";
             }
 

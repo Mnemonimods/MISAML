@@ -1,9 +1,11 @@
 ﻿using System;
-using System.Configuration.Assemblies;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Threading;
+using MISAML.Core;
 
 namespace MISAML.Bootstrap;
 
@@ -60,7 +62,7 @@ public static class Loader
         Path.GetDirectoryName(typeof(Loader).Assembly.Location)!,
         "misaml.log"
     );
-    
+
     private static void Log(string message)
     {
         var line = $"{_stopwatch.Elapsed.TotalSeconds:F6} [MISAML.Bootstrap] {message}";
@@ -80,7 +82,7 @@ public static class Loader
         File.WriteAllText(LogPath, ""); // clear log
 
         Log("Starting, waiting for Mnemonimov...");
-    
+
         // run this function whenever a new assembly is loaded into the AppDomain
         //
         // add the function to the AssemblyLoad event so it runs automatically
@@ -95,7 +97,7 @@ public static class Loader
                 // Interlocked.CompareExchange is an Atomic, ensures only the
                 // first assembly actually triggers the handoff
                 // ref is basically like *, instead of copying the value
-                if (System.Threading.Interlocked.CompareExchange(ref _handoffStarted, 1, 0) == 0)
+                if (Interlocked.CompareExchange(ref _handoffStarted, 1, 0) == 0)
                 {
                     Log($"anchor assembly '{loadedName}' loaded, starting handoff...");
                     Start(args.LoadedAssembly);
@@ -112,7 +114,7 @@ public static class Loader
             // switching. Harmony patches VirtualMachine.HandleSystemCall,
             // the 58 bridge methods, all others, etc. etc.
             Log("calling StartupHook.Initialize() directly...");
-            MISAML.Core.StartupHook.Initialize();
+            StartupHook.Initialize();
             Log("StartupHook.Initialize() returned");
 
             // Load MISAML.GodotAPI.dll separately, into the isolated context
@@ -131,10 +133,10 @@ public static class Loader
                 throw new Exception($"MISAML.GodotAPI.dll not found at {payloadPath}");
 
             var isolatedPayload = isolatedContext.LoadFromAssemblyPath(payloadPath);
-            MISAML.Core.GodotBridge.Bind(isolatedPayload);
+            GodotBridge.Bind(isolatedPayload);
 
             // fire OnReady the first time the game calls into one of its bridge methods
-            MISAML.Core.GodotBridgePatch.OnBridgeInstanceSeen += OnFirstBridgeCall;
+            GodotBridgePatch.OnBridgeInstanceSeen += OnFirstBridgeCall;
 
             var baseDir = Path.GetDirectoryName(typeof(Loader).Assembly.Location)!;
             var modsDir = Path.GetFullPath(Path.Combine(baseDir, "..", "mods"));
@@ -149,11 +151,11 @@ public static class Loader
     private static void OnFirstBridgeCall(object instance)
     {
         // game is running, tree exists
-        MISAML.Core.GodotBridgePatch.OnBridgeInstanceSeen -= OnFirstBridgeCall;
-        MISAML.Core.GodotBridge.RaiseReady();
+        GodotBridgePatch.OnBridgeInstanceSeen -= OnFirstBridgeCall;
+        GodotBridge.RaiseReady();
     }
 
-    private static readonly System.Diagnostics.Stopwatch _stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    private static readonly Stopwatch _stopwatch = Stopwatch.StartNew();
 }
 
 public record ModStatus(string Id, string Name, string Version, bool Enabled, bool Loaded, string? Error, string? Description = null);

@@ -24,7 +24,7 @@ public static class ModLoader
 
     // every mod folder seen so far, so the Resolving hook can find a
     // sibling DLL by name regardless of which mod entry assembly asks
-    private static readonly List<string> _modDirs = [];
+    private static readonly List<string> ModDirs = [];
     private static bool _resolvingHooked = false;
 
     /*
@@ -64,7 +64,7 @@ public static class ModLoader
             _resolvingHooked = true;
             AssemblyLoadContext.Default.Resolving += (ctx, name) =>
             {
-                foreach (var dir in _modDirs)
+                foreach (var dir in ModDirs)
                 {
                     var candidate = Path.Combine(dir, name.Name + ".dll");
                     if (File.Exists(candidate))
@@ -85,7 +85,7 @@ public static class ModLoader
             // track every mod folder up front, even ones that end up skipped/
             // failed, covers a dependency being asked for before its own manifest 
             // has even been read yet
-            _modDirs.Add(modDir);
+            ModDirs.Add(modDir);
 
             var manifestPath = Path.Combine(modDir, "mod.json");
             if (!File.Exists(manifestPath))

@@ -29,6 +29,32 @@ public static class Hooks
     // lower runs first
     public const int DefaultPriority = 100;
 
+    // priority the given for a mod in misaml.toml, wins over whatever the mod
+    // passes to Register
+    private static readonly ConcurrentDictionary<string, int> ModPriorities = new(StringComparer.OrdinalIgnoreCase);
+
+    public static void SetModPriority(string modId, int priority) => ModPriorities[modId] = priority;
+
+    // tracks the id of the mod which is currently initializing, incl.
+    // across threads/async work
+    private static readonly System.Threading.AsyncLocal<string?> CurrentMod = new();
+
+    // sets the current mod while scope is active
+    public static IDisposable EnterMod(string modId) => new ModScope(modId);
+
+    private sealed class ModScope : IDisposable
+    {
+        private readonly string? _previous;
+
+        public ModScope(string modId)
+        {
+            _previous = CurrentMod.Value;
+            CurrentMod.Value = modId;
+        }
+
+        public void Dispose() => CurrentMod.Value = _previous;
+    }
+
     // one handler in a chain. Owner is only used for log messages.
     private sealed record Registration(
         Func<object?, object?[], HookResult> Handler,
@@ -82,6 +108,7 @@ public static class Hooks
 
         var key = Key(typeName, methodName);
         var owner = Describe(handler);
+        if (ModPriorities.TryGetValue(owner, out var configured)) priority = configured;
         int pos;
         int total;
 
@@ -111,7 +138,7 @@ public static class Hooks
     // get the name of the assembly containing the handler, so log msg's can
     // identify which mod it belongs to
     private static string Describe(Delegate handler)
-        => handler.Method.DeclaringType?.Assembly.GetName().Name ?? "unknown";
+        => CurrentMod.Value ?? handler.Method.DeclaringType?.Assembly.GetName().Name ?? "unknown";
 
     // checks PatchedKeys to see if given method has been patched, if not, patch
     private static void EnsurePatched(string typeName, string methodName, string key)
@@ -215,7 +242,7 @@ public static class Hooks
     }
 
     // prefix for void instance methods
-    // Harmony fills these parms in by name, don't rename
+    // Harmony fills these params in by name, don't rename
     private static bool GenericPrefixVoidInstance(MethodBase __originalMethod, object __instance, object[] __args)
         => !RunChain(__originalMethod, __instance, __args).SkipOriginal;
 

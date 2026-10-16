@@ -48,8 +48,18 @@ merge_dll() {
 }
 
 stage_bootstrap() {
-    log "Staging MISAML.Bootstrap.dll..."
-    cp "$BOOTSTRAP_PUBLISH/MISAML.Bootstrap.dll" dist/MISAML/
+    local ilrepack
+    ilrepack=$(find "$HOME/.nuget/packages/ilrepack" -name "ILRepack.exe" | sort -V | tail -1)
+    [ -n "$ilrepack" ] || { err "ILRepack.exe not found in NuGet cache, did 'dotnet add package ILRepack' run inside MISAML?"; exit 1; }
+
+    log "Merging Tomlyn.dll and Semver.dll into MISAML.Bootstrap.dll..."
+    dotnet "$ilrepack" \
+        /target:library \
+        /lib:"$BOOTSTRAP_PUBLISH" \
+        /out:dist/MISAML/MISAML.Bootstrap.dll \
+        "$BOOTSTRAP_PUBLISH/MISAML.Bootstrap.dll" \
+        "$BOOTSTRAP_PUBLISH/Tomlyn.dll" \
+        "$BOOTSTRAP_PUBLISH/Semver.dll"
 }
 
 stage_binaries() {

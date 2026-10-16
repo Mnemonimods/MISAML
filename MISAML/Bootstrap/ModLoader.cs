@@ -31,12 +31,19 @@ public static class ModLoader
     an example mod.json:
 
     {
-      "id": "example-mod",
-      "name": "example mod",
-      "version": "1.0.0",
-      "description": "Hi this is a description :3",
-      "entryAssembly": "examplemod.dll",
-      "entryScript": "main.gd"
+        "modId": "ExampleMod",
+        "author": "JJRol",
+        "modName": "Example Mod",
+        "description": "This is an example description.",
+        "version": "0.1.0",
+        "source": "https://github.com/user/example-mod",
+        "sourceManifest": "https://raw.githubusercontent.com/user/example-mod/main/mod.json",
+        "misamlVersion": "^0.1.0",
+        "entryAssembly": "ExampleMod.dll",
+        "entryScript": "main.gd",
+        "dependencies": {
+            "MISAML.API.Base": "^1.0.0"
+        }
     }
     */
     private record ModManifest(
@@ -131,8 +138,13 @@ public static class ModLoader
                 if (manifest.EntryAssembly == null && manifest.EntryScript == null)
                     throw new Exception("mod manifest requires an entry assembly or script!");
 
-                if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
-                if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);
+                // everything the mod registers while this block runs is owned
+                // by its modId, so Hooks can name the mod in the log
+                using (Hooks.EnterMod(manifest.Id))
+                {
+                    if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
+                    if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);
+                }
             }
             catch (Exception e)
             {

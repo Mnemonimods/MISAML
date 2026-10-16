@@ -1,5 +1,8 @@
 use std::{
-    collections::BTreeMap, os::unix::process::CommandExt, path::{Path, PathBuf}, process::Command,
+    collections::BTreeMap,
+    os::unix::process::CommandExt,
+    path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -10,7 +13,8 @@ use serde::Deserialize;
 struct Config {
     debug: bool,
     force: bool,
-    mods: BTreeMap<String, bool>
+    game_dir: Option<PathBuf>,
+    mods: BTreeMap<String, bool>,
 }
 
 // Hashes for supported Mnemonimov.dll version.
@@ -21,7 +25,6 @@ const SUPPORTED_HASHES: &[(&str, &str)] = &[
     ("GodotSharp.dll", "16dbe046b79ca898d2debefb1709906d"),
     ("mnemonimov.x86_64", "6c9c48cb4cf2f00d7bec39d0c491c32d"),
     ("mnemonimov.exe", "63fcd750c72581592ef20c8b4ea031cc"),
-
     /* 2026-10-14 */
     ("Mnemonimov.dll", "8b06c0c6ea2b6f209aecd5e51ae49d58"),
     ("Asm.dll", "ea2de8c656ae06817763bd56fd547c02"),
@@ -66,11 +69,15 @@ macro_rules! log {
 const DEFAULT_CONFIG: &str = "\
 # MISAML Configuration
 
-# Verbose logs for debugging
+# Verbose logs for debugging.
 debug = false
 
-# Force-launch the game even if untested
+# Force-launch the game even if untested.
 force = false
+
+# Where Mnemonimov is installed. Normally found through Steam automatically,
+# uncomment and set this if that fails or you want to use a different copy.
+# game_dir = \"/home/you/.local/share/Steam/steamapps/common/Mnemonimov\"
 
 # Mods set to \"false\" are skipped, mods not listed here load normally.
 # (the name is the \"id\" from the mod's manifest).
@@ -217,20 +224,17 @@ fn check_game_ver(game_dir: &Path, force: bool) -> Result<()> {
 }
 
 fn cmd_launch(force: bool) -> Result<()> {
-    let game_dir =
-        find_game_dir().context("could not find Mnemonimov, is it installed via Steam?")?;
-
-    log!("Found Mnemonimov at: {}", game_dir.display());
-
-    let exe_path = game_dir.join(platform::GAME_EXE);
-    require_exists(&exe_path, platform::GAME_EXE)?;
-
     let misaml_dir = own_install_dir().context("could not find misaml-cli directory")?;
 
     let config = load_config(&misaml_dir)?;
 
+    let game_dir = resolve_game_dir(&config)?;
+
+    let exe_path = game_dir.join(platform::GAME_EXE);
+    require_exists(&exe_path, platform::GAME_EXE)?;
+
     check_game_ver(&game_dir, force || config.force)?;
-    
+
     let payload_dir = misaml_dir.join("MISAML");
 
     ensure_runtime(&payload_dir)?;
@@ -254,7 +258,7 @@ fn cmd_launch(force: bool) -> Result<()> {
         .map(|(id, _)| id.as_str())
         .collect();
 
-    let mut cmd = Command::new(&exe_path); 
+    let mut cmd = Command::new(&exe_path);
     cmd.current_dir(&game_dir)
         .env("LD_PRELOAD", &shim_path)
         .env("MISAML_CORE_DIR", &payload_dir)
@@ -266,6 +270,48 @@ fn cmd_launch(force: bool) -> Result<()> {
     let err = cmd.exec();
 
     Err(anyhow!(err).context(format!("failed to launch {}", exe_path.display())))
+}
+
+// a game_dir that is set, but wrong is an error, not silent fallback to Steam,
+// otherwise a typo would quietly launch another copy
+fn resolve_game_dir(config: &Config) -> Result<PathBuf> {
+    // an empty game_dir = "" counts as not set
+    let configured = config
+        .game_dir
+        .as_deref()
+        .filter(|dir| !dir.as_os_str().is_empty());
+
+    if let Some(dir) = configured {
+        let dir = expand_home(dir);
+
+        if !dir.is_dir() {
+            bail!(
+                "game_dir in misaml.toml is not a folder: {}. \
+                 Fix the path, or remove the line to use Steam detection.",
+                dir.display()
+            );
+        }
+
+        log!("Using game_dir from misaml.toml: {}", dir.display());
+        return Ok(dir);
+    }
+
+    let dir = find_game_dir().context(
+        "could not find Mnemonimov, is it installed via Steam? \
+         You can also set game_dir in misaml.toml",
+    )?;
+
+    log!("Found Mnemonimov at: {}", dir.display());
+    Ok(dir)
+}
+
+// toml does not expand "~", so uh, fix
+fn expand_home(path: &Path) -> PathBuf {
+    if let (Ok(rest), Some(home)) = (path.strip_prefix("~"), std::env::var_os("HOME")) {
+        return PathBuf::from(home).join(rest);
+    }
+
+    path.to_path_buf()
 }
 
 fn find_game_dir() -> Result<PathBuf> {

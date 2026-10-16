@@ -15,9 +15,16 @@ struct Config {
 
 // Hashes for supported Mnemonimov.dll version.
 const SUPPORTED_HASHES: &[(&str, &str)] = &[
-    /* 2026-10-12 Linux */
+    /* 2026-10-12 */
     ("Mnemonimov.dll", "5111b0825cb5919c5a8fcc30717b2c0f"),
     ("Asm.dll", "173d587f1dd59340138f8bb06f7f1f7c"),
+    ("GodotSharp.dll", "16dbe046b79ca898d2debefb1709906d"),
+    ("mnemonimov.x86_64", "6c9c48cb4cf2f00d7bec39d0c491c32d"),
+    ("mnemonimov.exe", "63fcd750c72581592ef20c8b4ea031cc"),
+
+    /* 2026-10-14 */
+    ("Mnemonimov.dll", "8b06c0c6ea2b6f209aecd5e51ae49d58"),
+    ("Asm.dll", "ea2de8c656ae06817763bd56fd547c02"),
     ("GodotSharp.dll", "16dbe046b79ca898d2debefb1709906d"),
     ("mnemonimov.x86_64", "6c9c48cb4cf2f00d7bec39d0c491c32d"),
 ];

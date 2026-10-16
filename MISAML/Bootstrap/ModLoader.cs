@@ -14,17 +14,22 @@ namespace MISAML.Bootstrap;
 // they never touch live Godot types directly. A broken mod's exception is caught
 // and logged, never allowed to stop the rest of the mods from loading.
 //
-// Convention a mod DLL must follow: exactly one type named "ModEntry",
-// with a public static Initialize() method. That's the entire contract.
+// A mod DLL's starting point is named in mod.json by "entryMethod", written as
+// Namespace.Class.Method. The method must be public static with no parameters.
 public static class ModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;
     private static readonly List<ModStatus> _mods = [];
 
-    // every mod folder seen so far, so the Resolving hook can find a
-    // sibling DLL by name regardless of which mod entry assembly asks
+    // every mod folder, sorted so load order is the same every time ran
     private static readonly List<string> _modDirs = [];
+    
+    // assembly name -> full path, for every DLL in every mod folder 
+    // incl. subfolders. before any mod loads, the Resolving hook looks
+    // up names here
+    private static readonly Dictionary<string, string> _dllIndex = new(StringComparer.OrdinalIgnoreCase);
+    
     private static bool _resolvingHooked = false;
 
     /*
@@ -40,6 +45,7 @@ public static class ModLoader
         "sourceManifest": "https://raw.githubusercontent.com/user/example-mod/main/mod.json",
         "misamlVersion": "^0.1.0",
         "entryAssembly": "ExampleMod.dll",
+        "entryMethod": "ExampleMod.Main.Start",
         "entryScript": "main.gd",
         "dependencies": {
             "MISAML.API.Base": "^1.0.0"
@@ -52,6 +58,7 @@ public static class ModLoader
         string Version,
         string? Description,
         string? EntryAssembly,
+        string? EntryMethod,
         string? EntryScript
     );
 
@@ -71,29 +78,27 @@ public static class ModLoader
             _resolvingHooked = true;
             AssemblyLoadContext.Default.Resolving += (ctx, name) =>
             {
-                foreach (var dir in _modDirs)
+                if (name.Name != null && _dllIndex.TryGetValue(name.Name, out var path))
                 {
-                    var candidate = Path.Combine(dir, name.Name + ".dll");
-                    if (File.Exists(candidate))
-                    {
-                        log($"resolved dependency '{name.Name}' -> {candidate}");
-                        return ctx.LoadFromAssemblyPath(candidate);
-                    }
+                    log($"resolved dependency '{name.Name}' => {path}");
+                    return ctx.LoadFromAssemblyPath(path);
                 }
                 return null; // not found
             };
         }
 
+        // pass one, before any mod loads, list every mod folder (sorted)
+        // and index every DLL in them, so a mod can use a DLL from a mod that
+        // sorts after it
+        _modDirs.Clear();
+        _modDirs.AddRange(Directory.GetDirectories(modsDir).OrderBy(dir => dir, StringComparer.Ordinal));
+        BuilDllIdx(log);
+
         var disabled = (Environment.GetEnvironmentVariable("MISAML_DISABLED_MODS") ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries);
 
-        foreach (var modDir in Directory.GetDirectories(modsDir))
+        foreach (var modDir in _modDirs)
         {
-            // track every mod folder up front, even ones that end up skipped/
-            // failed, covers a dependency being asked for before its own manifest 
-            // has even been read yet
-            _modDirs.Add(modDir);
-
             var manifestPath = Path.Combine(modDir, "mod.json");
             if (!File.Exists(manifestPath))
             {
@@ -159,6 +164,69 @@ public static class ModLoader
         }
     }
 
+    /// <summary>
+    /// Builds an index of mod assemblies by filename, excluding build output and
+    /// resolving duplicate names by keeping the first assembly encountered.
+    /// </summary>
+    /// <param name="log">Receives warnings for duplicate assemblies and
+    /// directories that could not be read.</param>
+    private static void BuilDllIdx(Action<string> log)
+    {
+        foreach (var modDir in _modDirs)
+        {
+            try
+            {
+                
+                var dlls = Directory
+                    .EnumerateFiles(modDir, "*.dll", SearchOption.AllDirectories) /* find all dlls in the mod dir and subdirs */
+                    .Where(path => !IsBuildOutput(modDir, path)) /* skip build output dirs */
+                    .OrderBy(path => path.Count(c => c == Path.DirectorySeparatorChar)) /* load dlls from shallower dirs first */
+                    .ThenBy(path => path, StringComparer.Ordinal); /* sort alphabetically when at same depth */
+
+                foreach (var path in dlls)
+                {
+                    var name = Path.GetFileNameWithoutExtension(path);
+
+                    if (!_dllIndex.TryAdd(name, path))
+                        log($"duplicate assembly '{name}': keeping {_dllIndex[name]}, ignoring {path}");
+                }
+            }
+            catch (Exception e)
+            {
+                // one unreadable folder never stops the rest from being read
+                log($"could not read {modDir} for DLLs ({e.GetType().Name}: {e.Message})");
+            }
+        }
+
+        log($"indexed {_dllIndex.Count} assemblies from {_modDirs.Count} mod folders");
+    }
+
+    /// <summary>
+    /// Determines whether a DLL is located inside a build output directory, which
+    /// should be excluded from assembly discovery.
+    /// </summary>
+    /// <param name="modDir">The root directory of the mod being scanned.</param>
+    /// <param name="path">The full path of the DLL being checked.</param>
+    /// <returns><see langword="true"/> if the DLL is inside an <c>obj</c>
+    /// directory, otherwise, <see langword="false"/>.</returns>
+    private static bool IsBuildOutput(string modDir, string path)
+        => Path.GetRelativePath(modDir, path)
+            .Split(Path.DirectorySeparatorChar)
+            .SkipLast(1)
+            .Any(part => part.Equals("obj", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Loads the mod's entry assembly and invokes the method specified by
+    /// <see cref="ModManifest.EntryMethod"/>. The entry method must be public,
+    /// static, and have no parameters.</summary>
+    /// <param name="modDir">The root directory of the mod.</param>
+    /// <param name="manifest">The manifest specifying the entry assembly and
+    /// the method.</param>
+    /// <exception cref="FileNotFoundException">The entry assembly could not
+    /// be found.</exception>
+    /// <exception cref="Exception">The entry method is missing or invalid,
+    /// the specified class cannot be found, or the method doesn't exist with
+    /// the required specifications/signature.</exception>
     private static void LoadDll(string modDir, ModManifest manifest)
     {
         var dllPath = Path.Combine(modDir, manifest.EntryAssembly!);
@@ -167,18 +235,47 @@ public static class ModLoader
 
         var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
 
-        var entryType = asm.GetTypes().FirstOrDefault(t => t.Name == "ModEntry")
-            ?? throw new Exception("no type named 'ModEntry' found in assembly");
+        if (manifest.EntryMethod == null)
+            throw new Exception("entryAssembly needs entryMethod in mod.json (Hint: Namespace.Class.Method)");
+        
+        // split at the last dot, before it is the class, after it's the method
+        var split = manifest.EntryMethod.LastIndexOf('.');
+        if (split <= 0 || split == manifest.EntryMethod.Length - 1)
+            throw new Exception($"entryMethod '{manifest.EntryMethod}' must look like Namespace.Class.Method (or Class.Method with no namespace)");
 
-        var initMethod = entryType.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new Exception("ModEntry.Initialize() not found (must be public static)");
+        var className = manifest.EntryMethod[..split];
+        var methodName = manifest.EntryMethod[(split + 1)..];   
+
+        var entryType = asm.GetType(className)
+            ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryPoint is Namespace.Class.Method)");
+
+        var initMethod = entryType.GetMethod(
+                methodName, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)
+            ?? throw new Exception($"{className}.{methodName}() not found (must be public static, no parameters)");
 
         initMethod.Invoke(null, null);
     }
 
-    // keeps script instances alive (a script that is not a Node would be freed)
+    /// <summary>
+    /// Keeps instantiated mod scripts alive for the lifetime of the loader,
+    /// including scripts that are not attached to the Godot scene tree and
+    /// would otherwise be freed/dropped.
+    /// </summary>
     private static readonly List<object> _scriptInstances = [];
 
+    /// <summary>
+    /// Loads and instantiates a mod's GDScript entry point once Godot is ready.
+    /// Configures the instance with the mod directory and script API, then adds
+    /// it to the Godot scene tree if it extends <c>Node</c>.
+    /// Script compilation failures and non-Node instances are reported through
+    /// the logger provided.
+    /// </summary>
+    /// <param name="modDir">The root directory of the mod.</param>
+    /// <param name="manifest">The manifest specifying the entry script.</param>
+    /// <param name="log">Receives script compilation errors and loading warnings.</param>
+    /// <exception cref="FileNotFoundException">
+    /// The entry script could not be found at the specified path.
+    /// </exception>
     private static void LoadScript(string modDir, ModManifest manifest, Action<string> log)
     {
         var path = Path.Combine(modDir, manifest.EntryScript!);

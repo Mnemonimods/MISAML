@@ -1,9 +1,18 @@
 // Linux entry points. The shim is loaded with LD_PRELOAD and exports its own
 // dlsym and open64 so the dynamic linker routes the game calls thru it
 
-use std::{ffi::{CStr, CString, OsStr, c_char, c_int, c_void}, os::unix::ffi::OsStrExt, path::Path, sync::OnceLock};
+use std::{
+    ffi::{CStr, CString, OsStr, c_char, c_int, c_void},
+    os::unix::ffi::OsStrExt,
+    path::Path,
+    sync::OnceLock,
+};
 
-use crate::{CORECLR_HANDLE, REAL_INITIALIZE, ffi::{self, CoreclrInitializeFn, Open64Fn}, hooked_initialize, redirect};
+use crate::{
+    CORECLR_HANDLE, REAL_INITIALIZE,
+    ffi::{self, CoreclrInitializeFn, Open64Fn},
+    hooked_initialize, redirect,
+};
 
 static REAL_OPEN64: OnceLock<Option<Open64Fn>> = OnceLock::new();
 

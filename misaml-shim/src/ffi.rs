@@ -37,7 +37,6 @@ pub type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_vo
 #[cfg(target_os = "linux")]
 pub type Open64Fn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
 
-
 // resolve the real, unhooked dlsym, bypassing our own override
 //
 // have to use dlsym() with an explicit glibc symbol ver here, plain

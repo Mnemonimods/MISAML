@@ -17,19 +17,28 @@ struct Config {
     mods: BTreeMap<String, bool>,
 }
 
-// Hashes for supported Mnemonimov.dll version.
-const SUPPORTED_HASHES: &[(&str, &str)] = &[
-    /* 2026-10-12 */
-    ("Mnemonimov.dll", "5111b0825cb5919c5a8fcc30717b2c0f"),
-    ("Asm.dll", "173d587f1dd59340138f8bb06f7f1f7c"),
-    ("GodotSharp.dll", "16dbe046b79ca898d2debefb1709906d"),
-    ("mnemonimov.x86_64", "6c9c48cb4cf2f00d7bec39d0c491c32d"),
-    ("mnemonimov.exe", "63fcd750c72581592ef20c8b4ea031cc"),
-    /* 2026-10-14 */
-    ("Mnemonimov.dll", "8b06c0c6ea2b6f209aecd5e51ae49d58"),
-    ("Asm.dll", "ea2de8c656ae06817763bd56fd547c02"),
-    ("GodotSharp.dll", "16dbe046b79ca898d2debefb1709906d"),
-    ("mnemonimov.x86_64", "6c9c48cb4cf2f00d7bec39d0c491c32d"),
+// Known hashes of the game's DLLs
+const DLL_HASHES: &[(&str, &[&str])] = &[
+    (
+        "Mnemonimov.dll",
+        &[
+            "5111b0825cb5919c5a8fcc30717b2c0f", /* 2026-10-12 */
+            "8b06c0c6ea2b6f209aecd5e51ae49d58", /* 2026-10-14 */
+        ],
+    ),
+    (
+        "Asm.dll",
+        &[
+            "173d587f1dd59340138f8bb06f7f1f7c", /* 2026-10-12 */
+            "ea2de8c656ae06817763bd56fd547c02", /* 2026-10-14 */
+        ],
+    ),
+    (
+        "GodotSharp.dll",
+        &[
+            "16dbe046b79ca898d2debefb1709906d", /* 2026-10-12 and 2026-10-14 */
+        ],
+    ),
 ];
 
 const MNEMONIMOV_APP_ID: u32 = 3854110;
@@ -40,6 +49,9 @@ const RUNTIME_VERSION: &str = "8.0.30";
 mod platform {
     pub const RUNTIME_PACKAGE: &str = "win-x64.zip";
     pub const GAME_EXE: &str = "mnemonimov.exe";
+    pub const GAME_EXE_HASHES: &[&str] = &[
+        "63fcd750c72581592ef20c8b4ea031cc", /* 2026-10-12 */
+    ];
     pub const SHIM_NAME: &str = "libmisaml_shim.dll";
     pub const DATA_DIR: &str = "data_Mnemonimov_windows_x86_64";
 }
@@ -48,6 +60,9 @@ mod platform {
 mod platform {
     pub const RUNTIME_PACKAGE: &str = "linux-x64.tar.gz";
     pub const GAME_EXE: &str = "mnemonimov.x86_64";
+    pub const GAME_EXE_HASHES: &[&str] = &[
+        "6c9c48cb4cf2f00d7bec39d0c491c32d", /* 2026-10-12 and 2026-10-14 */
+    ];
     pub const SHIM_NAME: &str = "libmisaml_shim.so";
     pub const DATA_DIR: &str = "data_Mnemonimov_linuxbsd_x86_64";
 }
@@ -95,17 +110,17 @@ fn main() -> Result<()> {
     }
 }
 
-fn load_config(misaml_dir: &Path) -> Result<Config> {
+fn ensure_config(misaml_dir: &Path) {
     let path = misaml_dir.join("misaml.toml");
 
     if !path.exists() {
         match std::fs::write(&path, DEFAULT_CONFIG) {
             Ok(()) => {
-                log!("Created default config file at {}", path.display());
+                log!("created default config file at {}", path.display());
             }
             Err(e) => {
                 log!("could not create {} ({e}), using defaults", path.display());
-                return Ok(Config::default());
+                return;
             }
         }
     }
@@ -113,6 +128,17 @@ fn load_config(misaml_dir: &Path) -> Result<Config> {
     if let Err(e) = sync_mods(&path, &misaml_dir.join("mods")) {
         log!("could not update {}: {e:#}", path.display());
     }
+}
+
+// reads misaml.toml, defaults if it could not be created
+fn load_config(misaml_dir: &Path) -> Result<Config> {
+    let path = misaml_dir.join("misaml.toml");
+
+    if !path.exists() {
+        return Ok(Config::default());
+    }
+
+    log!("config: {}", path.display());
 
     let text = std::fs::read_to_string(&path)?;
 
@@ -181,26 +207,35 @@ fn sync_mods(config_path: &Path, mods_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn check_file(path: &Path, name: &str, known: &[&str], mismatch: &mut Vec<String>) -> Result<()>
+{
+    require_exists(path, name)?;
+
+    let hash = format!("{:x}", md5::compute(std::fs::read(path)?));
+
+    if known.contains(&hash.as_str()) {
+        debug_log!("{name} matches");
+    } else {
+        mismatch.push(format!("{name} (found {hash})"));
+    }
+
+    Ok(())
+}
+
 fn check_game_ver(game_dir: &Path, force: bool) -> Result<()> {
     let data_dir = game_dir.join(platform::DATA_DIR);
     let mut mismatch = Vec::new();
 
-    for (name, expected) in SUPPORTED_HASHES {
-        // the executable sits in the game folder, the dlls in the data folder
-        let path = if *name == platform::GAME_EXE {
-            game_dir.join(name)
-        } else {
-            data_dir.join(name)
-        };
-        require_exists(&path, name)?;
+    check_file(
+        &game_dir.join(platform::GAME_EXE),
+        platform::GAME_EXE,
+        platform::GAME_EXE_HASHES,
+        &mut mismatch,
+    )?;
 
-        let hash = format!("{:x}", md5::compute(std::fs::read(&path)?));
-
-        if hash == *expected {
-            debug_log!("{name} matches");
-        } else {
-            mismatch.push(format!("{name} (found {hash})"));
-        }
+    // the dlls sit in the data folder
+    for &(name, known) in DLL_HASHES {
+        check_file(&data_dir.join(name), name, known, &mut mismatch)?;
     }
 
     if mismatch.is_empty() {
@@ -225,6 +260,8 @@ fn check_game_ver(game_dir: &Path, force: bool) -> Result<()> {
 
 fn cmd_launch(force: bool) -> Result<()> {
     let misaml_dir = own_install_dir().context("could not find misaml-cli directory")?;
+
+    ensure_config(&misaml_dir);
 
     let config = load_config(&misaml_dir)?;
 

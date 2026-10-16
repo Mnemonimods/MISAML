@@ -1,8 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    os::unix::process::CommandExt,
-    path::{Path, PathBuf},
-    process::Command,
+    collections::BTreeMap, os::unix::process::CommandExt, path::{Component, Path, PathBuf}, process::Command,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -461,64 +458,169 @@ fn cmd_extract_pck(path: Option<&String>, out_dir: Option<&String>) -> Result<()
     Ok(())
 }
 
+fn wanted_runtime_file(path: &Path) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {} /* archives mod from '.' start with './' */
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            _ => return None, /* '..' abs paths */
+        }
+    }
+
+    match parts.as_slice() {
+        [shared, framework, version, name]
+            if shared == "shared"
+                && framework == "Microsoft.NETCore.App"
+                && version == RUNTIME_VERSION
+                && name.to_ascii_lowercase().ends_with(".dll") => 
+        {
+            // on windows, the framework folder also holds native DLLs
+            // (coreclr.dll & others), redo when Windows work continues
+            Some(name.clone())
+        }
+        _ => None,
+    }
+}
+
 fn ensure_runtime(payload_dir: &Path) -> Result<()> {
-    let marker = payload_dir
-        .join("runtime/shared/Microsoft.NETCore.App")
+    let runtime_dir = payload_dir.join("runtime");
+    let framework_dir = runtime_dir
+        .join("shared/Microsoft.NETCore.App")
         .join(RUNTIME_VERSION);
 
-    if marker.is_dir() {
+    if framework_dir.is_dir() {
         debug_log!("Runtime {RUNTIME_VERSION} already present!");
         return Ok(());
     }
 
     log!("Runtime {RUNTIME_VERSION} not found, downloading...");
 
-    let runtime_dir = payload_dir.join("runtime");
-    std::fs::create_dir_all(&runtime_dir).context("could not create runtime directory")?;
-
     let url = format!(
         "https://builds.dotnet.microsoft.com/dotnet/Runtime/{RUNTIME_VERSION}/dotnet-runtime-{RUNTIME_VERSION}-{}",
         platform::RUNTIME_PACKAGE
     );
 
-    log!("Downloading from {url}...");
+    // Download into a staging directory first, then rename in place.
+    // If the download fails, the final dir never exists, so the next launch
+    // retries instead of treating an incomplete download as complete, keep
+    // this alongside, not inside, runtime/shared so find_framework_dir never
+    // sees this
+    let staging_dir = runtime_dir.join(format!("staging-{RUNTIME_VERSION}"));
 
-    let mut response = ureq::get(&url)
-        .call()
-        .with_context(|| format!("failed to download .NET runtime from {url}"))?;
-
-    extract_runtime_archive(response.body_mut().as_reader(), &runtime_dir)?;
-
-    if !marker.is_dir() {
-        bail!(
-            "Runtime download completed but expected folder {} is missing, the download may be corrupt!",
-            marker.display()
-        );
+    if staging_dir.exists() {
+        std::fs::remove_dir_all(&staging_dir).context("could not clear an old staging download")?;
     }
 
-    log!("Runtime {RUNTIME_VERSION} ready!");
+    std::fs::create_dir_all(&staging_dir).context("could not create runtime directory")?;
+
+    let kept = match download_runtime(&url, &staging_dir) {
+        Ok(kept) => kept,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&staging_dir);
+            return Err(e);
+        }
+    };
+
+    let parent = framework_dir
+        .parent()
+        .context("runtime folder has no parent directory")?;
+    
+    std::fs::create_dir_all(parent)?;
+    std::fs::rename(&staging_dir, &framework_dir)
+        .with_context(|| format!("could not move the runtime into {}", framework_dir.display()))?;
+
+    log!("Runtime {RUNTIME_VERSION} ready! ({kept} framework DLLs)");
 
     Ok(())
 }
 
-fn extract_runtime_archive(reader: impl std::io::Read, runtime_dir: &Path) -> Result<()> {
+// downloads the runtime archive and saves JUST the framework DLLs into
+// dest_dir, returns how many it kept
+fn download_runtime(url: &str, dest_dir: &Path) -> Result<usize> {
+    log!("Downloading from {url}...");
+
+    let mut resp = ureq::get(url)
+        .call()
+        .with_context(|| format!("failed to download .NET runtime from {url}"))?;
+
+    let kept = extract_runtime_archive(resp.body_mut().as_reader(), dest_dir)?;
+
+    // if MS ever changes the archive layout, say so, don't quietly end up
+    // with an empty runtime folder
+    if kept == 0 {
+        bail!(
+            "downloaded the .NET runtime, but found no framework DLLs in it \
+             (expected shared/Microsoft.NETCore.App/{RUNTIME_VERSION}/*.dll), \
+             the archive layout may have changed."
+        );
+    }
+
+    Ok(kept)
+}
+
+fn extract_runtime_archive(reader: impl std::io::Read, dest_dir: &Path) -> Result<usize> {
+    let mut kept = 0;
+
     #[cfg(target_os = "windows")]
     {
+        // zip need random access, so this has to be held for it
+        let mut reader = reader;
         let mut data = Vec::new();
+
         reader.read_to_end(&mut data)?;
 
-        zip::ZipArchive::new(std::io::Cursor::new(data))
-            .context("failed to open .NET runtime zip archive")?
-            .extract(runtime_dir)
-            .context("failed to extract .NET runtime zip archive")?;
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data))
+            .context("failed to open .NET runtime zip archive")?;
+
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i)?;
+
+            if !file.is_file() {
+                continue;
+            }
+
+            let Some(name) = wanted_runtime_file(Path::new(file.name())) else {
+                continue;
+            };
+
+            let mut out = std::fs::File::create(dest_dir.join(&name))
+                .with_context(|| format!("could not write {name}"))?;
+            
+            std::io::copy(&mut file, &mut out)
+                .with_context(|| format!("could not extract {name}"))?;
+
+            kept += 1;
+        }
     }
 
     #[cfg(target_os = "linux")]
     {
-        tar::Archive::new(flate2::read::GzDecoder::new(reader))
-            .unpack(runtime_dir)
-            .context("failed to extract .NET runtime tar.gz archive")?;
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
+
+        for entry in archive
+            .entries()
+            .context("failed to read .NET runtime tar.gz archive")?
+        {
+            let mut entry = entry.context("failed to read an entry of the .NET runtime archive")?;
+
+            if !entry.header().entry_type().is_file() {
+                continue;
+            }
+
+            let Some(name) = wanted_runtime_file(&entry.path()?) else {
+                continue;
+            };
+
+            // unpack to a path built, never one from the archive
+            entry
+                .unpack(dest_dir.join(&name))
+                .with_context(|| format!("could not extract {name}"))?;
+            
+            kept += 1;
+        }
     }
 
-    Ok(())
+    Ok(kept)
 }

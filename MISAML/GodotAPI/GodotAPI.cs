@@ -24,7 +24,7 @@ public static class Primitives
     private const BindingFlags Stat = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
 
     #region Godot objects (property/method system)
-    
+
     /// <summary>
     /// Gets the property name of a godotObject
     /// </summary>
@@ -64,7 +64,7 @@ public static class Primitives
     /// <param name="args">optional args for the method</param>
     public static void CallDeferred(GodotObject instance, string methodName, object?[] args)
         => instance.CallDeferred(methodName, args.Select(ToVariant).ToArray());
-    
+
     /// <summary>
     /// instantiates a godot class
     /// </summary>
@@ -77,7 +77,7 @@ public static class Primitives
         return variant.AsGodotObject()
                ?? throw new Exception($"ClassDB.Instantiate({className}) returned null/non-object!");
     }
-    
+
     /// <summary>
     /// Checks if the instance is valid
     /// </summary>
@@ -139,7 +139,7 @@ public static class Primitives
 
         ret = default;
     }
-    
+
     /// <summary>
     /// create a Callable that runs a C# function with any number of args and can return values
     /// </summary>
@@ -167,7 +167,7 @@ public static class Primitives
             ret = default;
         }
     }
-    
+
     /// <summary>
     /// Transforms separate native args into .NET Objects
     /// </summary>
@@ -180,7 +180,7 @@ public static class Primitives
             values[i] = FromVariant(Variant.CreateCopyingBorrowed(args[i]));
         return values;
     }
-    
+
     /// <summary>
     /// Disconnects a signal from a callable
     /// </summary>
@@ -194,7 +194,7 @@ public static class Primitives
         lock (Connections)
         {
             if (!Connections.Remove((instance, signalName, handler), out callable)) throw new Exception("The signal was never connected"); // never connected
-            
+
         }
 
         instance.Disconnect(signalName, callable);
@@ -203,7 +203,7 @@ public static class Primitives
     #endregion
 
     #region static stuff
-    
+
     /// <summary>
     /// Calls a static function
     /// </summary>
@@ -217,7 +217,7 @@ public static class Primitives
             BindingFlags.InvokeMethod | BindingFlags.OptionalParamBinding | Stat, null, null, args);
         return result is Variant v ? FromVariant(v) : result;
     }
-    
+
     /// <summary>
     /// gets a static member
     /// </summary>
@@ -230,7 +230,7 @@ public static class Primitives
             BindingFlags.GetField | BindingFlags.GetProperty | Stat, null, null, null);
         return result is Variant v ? FromVariant(v) : result;
     }
-    
+
     /// <summary>
     /// sets a static member
     /// </summary>
@@ -264,7 +264,7 @@ public static class Primitives
     public static object? GetMember(object instance, string name)
         => instance.GetType().InvokeMember(name,
             BindingFlags.GetField | BindingFlags.GetProperty | Inst, null, instance, null);
-    
+
     /// <summary>
     /// Sets the value of an instance field or property by name
     /// </summary>
@@ -289,7 +289,7 @@ public static class Primitives
     #endregion
 
     #region threading
-    
+
     /// <summary>
     /// Runs the specified action on the Godot main thread during the next idle moment. Safe to call from any thread
     /// </summary>

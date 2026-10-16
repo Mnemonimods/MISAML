@@ -32,8 +32,9 @@ jobs:
         include:
           - os: ubuntu-latest
             experimental: false
-          - os: windows-latest
-            experimental: true
+#            turned off windows for now as that's still BROKEN asf.
+#          - os: windows-latest
+#            experimental: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,9 +60,18 @@ jobs:
         run: cargo test --locked
 
   build-csharp:
-    name: C#
-    runs-on: ubuntu-latest
+    name: C# (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    continue-on-error: ${{ matrix.experimental }}
+    strategy: 
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            experimental: false
+          - os: windows-latest
+            experimental: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4

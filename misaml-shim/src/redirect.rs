@@ -1,4 +1,9 @@
-// redirects open64() calls for the games trimmed framework dlls to the
+// decides which file opens get redirected. the hooks that actually intercept
+// opens live in linux.rs (open64 today, future windows.rs would add
+// CreateFileW here too)
+//
+// the game loads its dependencies from its own folder, and that folder only
+// has trimmed framework dlls. so opens of those dlls get pointed at the
 // untrimmed copies MISAML ships w/
 //
 // narrow on purpose, a file only gets redirected if ALL of these are true:
@@ -7,41 +12,67 @@
 // 2. its filename is one we're actually replacing
 // 3. the replacement file exists
 
-use std::ffi::{CStr, CString, OsString, c_char};
 use std::{
+    collections::HashMap,
     ffi::OsStr,
-    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
-
-use crate::ffi::Open64Fn;
 
 // the game's own runtime dir, grabbed once from APP_CONTEXT_BASE_DIRECTORY
 // during coreclr_initialize. only opens inside this exact dir are ever
 // even considered for redirection
 static GAME_RUNTIME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-// (redir from filename -> full replacement path), built on first
-// use instead of rereading the framework dir every open64 call
-static REDIRECTS: OnceLock<std::collections::HashMap<OsString, PathBuf>> = OnceLock::new();
+// (redirect from filename -> full replacement path), built once instead of
+// rereading the framework dir on every file open
+static REDIRECTS: OnceLock<HashMap<String, PathBuf>> = OnceLock::new();
 
 pub fn set_game_runtime_dir(dir: PathBuf) {
     let _ = GAME_RUNTIME_DIR.set(dir);
 }
 
-fn redirects() -> &'static std::collections::HashMap<OsString, PathBuf> {
+// file names are case-insensitive on Windows
+fn name_key(name: &OsStr) -> String {
+    let name = name.to_string_lossy();
+
+    if cfg!(windows) {
+        name.to_ascii_lowercase()
+    } else {
+        name.into_owned()
+    }
+}
+
+// compares dirs the way windows does, ignoring case, slash direction, a
+// trailing slash and the \\?\ long-path prefix
+fn normalize_windows_dir(path: &str) -> String {
+    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+
+    path.replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase()
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        normalize_windows_dir(&a.to_string_lossy()) == normalize_windows_dir(&b.to_string_lossy())
+    } else {
+        a == b
+    }
+}
+
+fn redirects() -> &'static HashMap<String, PathBuf> {
     REDIRECTS.get_or_init(|| {
         // build redirects from the framework directory
         let Some(framework_dir) = std::env::var_os("MISAML_FRAMEWORK_DIR") else {
-            return std::collections::HashMap::new();
+            return HashMap::new();
         };
 
         let Ok(entries) = std::fs::read_dir(framework_dir) else {
-            return std::collections::HashMap::new();
+            return HashMap::new();
         };
 
-        let mut map = std::collections::HashMap::new();
+        let mut map = HashMap::new();
 
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
@@ -57,7 +88,7 @@ fn redirects() -> &'static std::collections::HashMap<OsString, PathBuf> {
                 continue;
             };
 
-            map.insert(name.to_os_string(), path);
+            map.insert(name_key(name), path);
         }
 
         map
@@ -66,59 +97,50 @@ fn redirects() -> &'static std::collections::HashMap<OsString, PathBuf> {
 
 // finds if "requested" should get redirected, and to where.
 // lookup against the configured game runtime dir and redirect cache
-fn redirect_target(requested: &Path) -> Option<PathBuf> {
+pub fn redirect_target(requested: &Path) -> Option<PathBuf> {
     let game_dir = GAME_RUNTIME_DIR.get()?;
 
     // only redirect requests directly from the game runtime directory
-    if requested.parent()? != game_dir.as_path() {
+    if !same_dir(requested.parent()?, game_dir) {
         return None;
     }
 
-    let name = requested.file_name()?;
-
-    redirects().get(name).cloned()
+    redirects().get(&name_key(requested.file_name()?)).cloned()
 }
 
-// only ever call this as the installed open64 hook, not directly
-pub unsafe fn hook(pathname: *const c_char, flags: libc::c_int, real: Open64Fn) -> libc::c_int {
-    if pathname.is_null() || GAME_RUNTIME_DIR.get().is_none() {
-        return unsafe { call_real(real, pathname, flags) };
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_dirs_ignore_case_slashes_prefix_and_trailing_slash() {
+        let a = normalize_windows_dir(r"\\?\Z:\Home\Game\Data\");
+        let b = normalize_windows_dir("z:/home/game/data");
+        assert_eq!(a, b);
+        assert_eq!(a, r"z:\home\game\data");
     }
 
-    let requested = unsafe { CStr::from_ptr(pathname) };
-    let requested_path = Path::new(OsStr::from_bytes(requested.to_bytes()));
+    #[test]
+    fn redirects_only_known_dlls_in_the_game_dir() {
+        let base =
+            std::env::temp_dir().join(format!("misaml-redirect-test-{}", std::process::id()));
+        let framework = base.join("framework");
+        let game = base.join("game");
+        std::fs::create_dir_all(&framework).unwrap();
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(framework.join("System.Linq.dll"), b"x").unwrap();
 
-    match redirect_target(requested_path) {
-        Some(replacement) => {
-            if std::env::var_os("MISAML_DEBUG").is_some() {
-                eprintln!(
-                    "[misaml-shim] redirecting {} -> {}",
-                    requested_path.display(),
-                    replacement.display()
-                );
-            }
+        unsafe { std::env::set_var("MISAML_FRAMEWORK_DIR", &framework) };
+        set_game_runtime_dir(game.clone());
 
-            let replacement = replacement.as_os_str();
+        assert_eq!(
+            redirect_target(&game.join("System.Linq.dll")),
+            Some(framework.join("System.Linq.dll"))
+        );
 
-            let Ok(cstr) = CString::new(replacement.as_encoded_bytes()) else {
-                return unsafe { call_real(real, pathname, flags) };
-            };
+        assert_eq!(redirect_target(&game.join("Mnemonimov.dll")), None);
+        assert_eq!(redirect_target(&base.join("System.Linq.dll")), None);
 
-            unsafe { call_real(real, cstr.as_ptr(), flags) }
-        }
-
-        None => unsafe { call_real(real, pathname, flags) },
+        let _ = std::fs::remove_dir_all(&base);
     }
-}
-
-// O_CREAT adds a variadic mode arg that Open64Fn can't represent
-// safely in Rust, so we use the raw syscall here like the original
-unsafe fn call_real(real: Open64Fn, pathname: *const c_char, flags: libc::c_int) -> libc::c_int {
-    if flags & libc::O_CREAT != 0 {
-        return unsafe {
-            libc::syscall(libc::SYS_openat, libc::AT_FDCWD, pathname, flags, 0o666) as libc::c_int
-        };
-    }
-
-    unsafe { real(pathname, flags) }
 }

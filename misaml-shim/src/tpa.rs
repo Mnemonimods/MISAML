@@ -6,6 +6,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// TPA entries are separated by ';' on windows and ':' everywhere else
+#[cfg(target_os = "windows")]
+pub const SEP: char = ';';
+#[cfg(not(target_os = "windows"))]
+pub const SEP: char = ':';
+
 // one DLL to make available through TPA
 #[derive(Debug, Clone)]
 pub struct Assembly {
@@ -47,8 +53,7 @@ pub fn build_tpa(original: &str, framework: &[Assembly], payload: &[Assembly]) -
     let mut seen: HashSet<OsString> = HashSet::new();
     let mut entries: Vec<String> = Vec::new();
 
-    // TPA entries sep by ':' on unix, idk windows situation
-    for entry in original.split(':').filter(|s| !s.is_empty()) {
+    for entry in original.split(SEP).filter(|s| !s.is_empty()) {
         let path = Path::new(entry);
         let name = path.file_name().map(|n| n.to_os_string());
 
@@ -75,5 +80,5 @@ pub fn build_tpa(original: &str, framework: &[Assembly], payload: &[Assembly]) -
         entries.push(asm.path.to_string_lossy().into_owned());
     }
 
-    entries.join(":")
+    entries.join(&SEP.to_string())
 }

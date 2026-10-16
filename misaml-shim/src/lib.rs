@@ -5,21 +5,41 @@
 //
 // Mods & Harmony are managed in MISAML.Core
 
-mod ffi;
-mod redirect;
-mod tpa;
-
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::sync::{
     OnceLock,
     atomic::{AtomicU8, Ordering},
 };
 
-use ffi::{BootstrapFn, CoreclrCreateDelegateFn, CoreclrInitializeFn, Open64Fn};
-
+use crate::ffi::{BootstrapFn, CoreclrCreateDelegateFn, CoreclrInitializeFn};
 use crate::tpa::Assembly;
 
-const BUILD_ID: &str = env!("CARGO_PKG_VERSION");
+// reads MISAML_DEBUG once and remembers the answer
+pub(crate) fn debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("MISAML_DEBUG").is_some())
+}
+
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        if $crate::debug_enabled() {
+            eprintln!(concat!("[misaml-shim ", env!("CARGO_PKG_VERSION"), "] {}"), format!($($arg)*));
+        }
+    };
+}
+
+macro_rules! log {
+    ($($arg:tt)*) => {
+        eprintln!(concat!("[misaml-shim ", env!("CARGO_PKG_VERSION"), "] {}"), format!($($arg)*));
+    };
+}
+
+mod ffi;
+mod redirect;
+mod tpa;
+
+#[cfg(target_os = "linux")]
+mod linux;
 
 #[repr(u8)]
 enum InitState {
@@ -32,91 +52,12 @@ enum InitState {
 // prevents coreclr_initialize from running this setup twice
 static INIT_STATE: AtomicU8 = AtomicU8::new(InitState::Uninitialized as u8);
 
-static REAL_INITIALIZE: OnceLock<CoreclrInitializeFn> = OnceLock::new();
-static REAL_OPEN64: OnceLock<Option<Open64Fn>> = OnceLock::new();
-static CORECLR_HANDLE: OnceLock<usize> = OnceLock::new();
+// the platform entry points, fill these in when the
+// game looks up coreclr_initialize
+pub(crate) static REAL_INITIALIZE: OnceLock<CoreclrInitializeFn> = OnceLock::new();
+pub(crate) static CORECLR_HANDLE: OnceLock<usize> = OnceLock::new();
 
-// only prints if MISAML_DEBUG is set, for debug
-macro_rules! debug_log {
-    ($($arg:tt)*) => {
-        if std::env::var_os("MISAML_DEBUG").is_some() {
-            eprintln!("[misaml-shim {BUILD_ID}] {}", format!($($arg)*));
-        }
-    };
-}
-
-macro_rules! log {
-    ($($arg:tt)*) => {
-        eprintln!("[misaml-shim {BUILD_ID}] {}", format!($($arg)*));
-    };
-}
-
-/// Intercepts `dlsym` lookups for `coreclr_initialize`.
-///
-/// # Safety
-///
-/// `symbol` must point to a valid NUL-terminated C string.
-/// `handle` must be a valid dynamic linker handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void {
-    if symbol.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let name = unsafe { CStr::from_ptr(symbol) }.to_string_lossy();
-
-    // replace only the coreclr_initialize lookup, every other symbol is
-    // passed directly through to the real dynamic linker
-    if name == "coreclr_initialize" {
-        debug_log!("intercepted dlsym lookup for coreclr_initialize");
-
-        let real = unsafe { ffi::resolve(handle, c"coreclr_initialize") };
-        if real.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        // save the real fn + handle so hooked_initialize/bootstrap_managed
-        // can use them later without recursing into our own dlsym
-        let real_fn: CoreclrInitializeFn = unsafe { std::mem::transmute(real) };
-        let _ = REAL_INITIALIZE.set(real_fn);
-        let _ = CORECLR_HANDLE.set(handle as usize);
-
-        return hooked_initialize as *mut c_void;
-    }
-
-    match ffi::real_dlsym() {
-        Some(real_dlsym) => unsafe { real_dlsym(handle, symbol) },
-        None => std::ptr::null_mut(),
-    }
-}
-
-/// Redirects framework assembly opens to the complete .NET runtime copy.
-///
-/// # Safety
-///
-/// `pathname` must be a valid NUL-terminated C string when non-null.
-/// `flags` must be valid for libc's `open64`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn open64(
-    // only reachable via LD_PRELOAD, never called ourselves
-    pathname: *const c_char,
-    flags: c_int,
-) -> c_int {
-    let Some(real) = REAL_OPEN64.get_or_init(|| {
-        let ptr = unsafe { ffi::resolve(libc::RTLD_NEXT, c"open64") };
-        if ptr.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, Open64Fn>(ptr) })
-        }
-    }) else {
-        return -1;
-    };
-
-    unsafe { redirect::hook(pathname, flags, *real) }
-}
-
-unsafe extern "C" fn hooked_initialize(
+pub(crate) unsafe extern "C" fn hooked_initialize(
     exe_path: *const c_char,
     app_domain_friendly_name: *const c_char,
     property_count: c_int,
@@ -225,7 +166,7 @@ unsafe extern "C" fn hooked_initialize(
         let existing = unsafe { CStr::from_ptr(*value) }.to_string_lossy();
         let new_tpa = tpa::build_tpa(&existing, &framework_assemblies, &payload_assemblies);
 
-        debug_log!("new TPA built: {} entries", new_tpa.split(':').count());
+        debug_log!("new TPA built: {} entries", new_tpa.split(tpa::SEP).count());
 
         let Ok(cstr) = CString::new(new_tpa) else {
             log!("TPA value had a NUL byte, running unmodified");

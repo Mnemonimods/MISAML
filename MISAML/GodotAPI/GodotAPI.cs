@@ -45,7 +45,7 @@ public static class Primitives
 
     /// <summary>
     /// Calls a property inside a GodotObject with specified args <br/>
-    /// <b> Note: </b> the method to be called has to be in snake_case
+    /// <b> Note: </b> the method to be called has to be in snake_case when referring to godot's built in methods
     /// </summary>
     /// <param name="instance">the GodotObject</param>
     /// <param name="methodName">The method to call</param>
@@ -55,22 +55,22 @@ public static class Primitives
         => FromVariant(instance.Call(methodName, args.Select(ToVariant).ToArray()));
 
     /// <summary>
-    ///
-    /// <b> Note: </b> this always will return NULL, not the result of the method called
+    /// calls the <paramref name="methodName"/> on the object during idle time <br/>
+    /// <b> Note: </b> this always will return NULL, not the result of the method called <br/>
+    /// the method to be called has to be in snake_case when referring to godot's built in methods
     /// </summary>
-    /// <param name="instance"></param>
-    /// <param name="methodName"></param>
-    /// <param name="args"></param>
+    /// <param name="instance">the GodotObject</param>
+    /// <param name="methodName">The method to call</param>
+    /// <param name="args">optional args for the method</param>
     public static void CallDeferred(GodotObject instance, string methodName, object?[] args)
         => instance.CallDeferred(methodName, args.Select(ToVariant).ToArray());
     
     /// <summary>
-    /// 
+    /// instantiates a godot class
     /// </summary>
-    /// <param name="className"></param>
-    /// <returns></returns>
-    /// <exception cref="Exception"></exception>
-    /// 
+    /// <param name="className">the classname to instantiate</param>
+    /// <returns>the instantiated class as a GodotObject</returns>
+    /// <exception cref="Exception">thrown when classname returns a null/non-object</exception>
     public static GodotObject Instantiate(string className)
     {
         var variant = ClassDB.Instantiate(className);
@@ -79,10 +79,13 @@ public static class Primitives
     }
     
     /// <summary>
-    /// 
+    /// Checks if the instance is valid
     /// </summary>
-    /// <param name="instance"></param>
-    /// <returns></returns>
+    /// <param name="instance">The instance to check for validity</param>
+    /// <returns>
+    /// <b>True</b> when the instance is valid <br/>
+    /// <b>False</b> when the instance is not valid
+    /// </returns>
     public static bool IsInstanceValid(GodotObject instance)
         => GodotObject.IsInstanceValid(instance);
 
@@ -92,35 +95,35 @@ public static class Primitives
 
     // remembers the Callable made per (object, signal, handler) so Disconnect
     // hands godot that exact one back
-    private static readonly Dictionary<(GodotObject, string, Delegate), Callable> _connections = [];
+    private static readonly Dictionary<(GodotObject, string, Delegate), Callable> Connections = [];
 
     // handler gets the signals args as an array (empty if none)
     /// <summary>
-    /// 
+    /// Connects a signal to a handler
     /// </summary>
-    /// <param name="instance"></param>
-    /// <param name="signalName"></param>
-    /// <param name="handler"></param>
-    /// <exception cref="ArgumentException"></exception>
-    
-    public static unsafe void Connect(GodotObject instance, string signalName, Action<object?[]> handler)
+    /// <param name="instance">the instance to access</param>
+    /// <param name="signalName">the name of the signal to connect</param>
+    /// <param name="handler">the handler to call when the signal is emitted</param>
+    /// <param name="flags">Connection flags that modify behavior. <b>See:</b> <see href="https://docs.godotengine.org/en/stable/classes/class_object.html#enum-object-connectflags">ConnectFlags</see> in the official Godot docs</param>
+    /// <exception cref="ArgumentException">thrown when the specified instance has no signal</exception>
+    public static unsafe void Connect(GodotObject instance, string signalName, Action<object?[]> handler, GodotObject.ConnectFlags flags)
     {
         if (!instance.HasSignal(signalName))
             throw new ArgumentException($"{instance.GetType().Name} has no signal '{signalName}'");
 
         var callable = Callable.CreateWithUnsafeTrampoline(handler, &SignalTrampoline);
 
-        lock (_connections) _connections[(instance, signalName, handler)] = callable;
-        instance.Connect(signalName, callable);
+        lock (Connections) Connections[(instance, signalName, handler)] = callable;
+        instance.Connect(signalName, callable, (uint)flags);
     }
 
     // Godot calls this with as many args the signal has
     /// <summary>
-    /// 
+    /// A trampoline function that is called by Godot when a signal is emitted.
     /// </summary>
-    /// <param name="delegateObj"></param>
-    /// <param name="args"></param>
-    /// <param name="ret"></param>
+    /// <param name="delegateObj">Delegate that is inside the callable</param>
+    /// <param name="args">arguments of the signal as pointers</param>
+    /// <param name="ret">return value back to godot. Is always <c>default</c></param>
     private static void SignalTrampoline(object delegateObj, NativeVariantPtrArgs args, out godot_variant ret)
     {
         var values = Unpack(args);
@@ -136,22 +139,21 @@ public static class Primitives
 
         ret = default;
     }
-
-    // create a Callable that runs a C# function, any number of args, can return a value
+    
     /// <summary>
-    /// 
+    /// create a Callable that runs a C# function with any number of args and can return values
     /// </summary>
-    /// <param name="function"></param>
+    /// <param name="function">The callable to create</param>
     /// <returns></returns>
     public static unsafe object CreateCallable(Func<object?[], object?> function)
         => Callable.CreateWithUnsafeTrampoline(function, &FunctionTrampoline);
 
     /// <summary>
-    /// 
+    /// like <see cref="SignalTrampoline"/>, but can have a return value
     /// </summary>
-    /// <param name="delegateObj"></param>
-    /// <param name="args"></param>
-    /// <param name="ret"></param>
+    /// <param name="delegateObj">the given delegate, upcast to System.Object</param>
+    /// <param name="args">godot_variant arguments</param>
+    /// <param name="ret">Return value of type godot_variant</param>
     private static void FunctionTrampoline(object delegateObj, NativeVariantPtrArgs args, out godot_variant ret)
     {
         try
@@ -167,10 +169,10 @@ public static class Primitives
     }
     
     /// <summary>
-    /// 
+    /// Transforms separate native args into .NET Objects
     /// </summary>
-    /// <param name="args"></param>
-    /// <returns></returns>
+    /// <param name="args">The args to convert to an object</param>
+    /// <returns>the objects created</returns>
     private static object?[] Unpack(NativeVariantPtrArgs args)
     {
         var values = new object?[args.Count];
@@ -180,17 +182,19 @@ public static class Primitives
     }
     
     /// <summary>
-    /// 
+    /// Disconnects a signal from a callable
     /// </summary>
-    /// <param name="instance"></param>
-    /// <param name="signalName"></param>
-    /// <param name="handler"></param>
+    /// <param name="instance">The instance the callable is in</param>
+    /// <param name="signalName">the signal remove</param>
+    /// <param name="handler">The handler the signal normally calls</param>
+    /// <exception cref="Exception">Thrown when the signal was never connected</exception>
     public static void Disconnect(GodotObject instance, string signalName, Action<object?[]> handler)
     {
         Callable callable;
-        lock (_connections)
+        lock (Connections)
         {
-            if (!_connections.Remove((instance, signalName, handler), out callable)) return; // never connected
+            if (!Connections.Remove((instance, signalName, handler), out callable)) throw new Exception("The signal was never connected"); // never connected
+            
         }
 
         instance.Disconnect(signalName, callable);
@@ -201,12 +205,12 @@ public static class Primitives
     #region static stuff
     
     /// <summary>
-    /// 
+    /// Calls a static function
     /// </summary>
     /// <param name="typeName"></param>
     /// <param name="methodName"></param>
     /// <param name="args"></param>
-    /// <returns></returns>
+    /// <returns>the result of calling the static member</returns>
     public static object? CallStatic(string typeName, string methodName, object?[] args)
     {
         var result = ResolveType(typeName).InvokeMember(methodName,
@@ -215,11 +219,11 @@ public static class Primitives
     }
     
     /// <summary>
-    /// 
+    /// gets a static member
     /// </summary>
-    /// <param name="typeName"></param>
-    /// <param name="memberName"></param>
-    /// <returns></returns>
+    /// <param name="typeName">the static type to get</param>
+    /// <param name="memberName">the member to get</param>
+    /// <returns>the value of the static member</returns>
     public static object? GetStatic(string typeName, string memberName)
     {
         var result = ResolveType(typeName).InvokeMember(memberName,
@@ -228,44 +232,45 @@ public static class Primitives
     }
     
     /// <summary>
-    /// 
+    /// sets a static member
     /// </summary>
-    /// <param name="typeName"></param>
-    /// <param name="memberName"></param>
-    /// <param name="value"></param>
+    /// <param name="typeName">the static type to set</param>
+    /// <param name="memberName">the member to set</param>
+    /// <param name="value">the value to set the member to</param>
     public static void SetStatic(string typeName, string memberName, object? value)
         => ResolveType(typeName).InvokeMember(memberName,
             BindingFlags.SetField | BindingFlags.SetProperty | Stat, null, null, [value]);
 
     // builders/constructors
     /// <summary>
-    /// 
+    /// Constructs an object from the typeName and provided arguments
     /// </summary>
-    /// <param name="typeName"></param>
-    /// <param name="args"></param>
-    /// <returns></returns>
-    /// <exception cref="Exception"></exception>
+    /// <param name="typeName">The type to construct</param>
+    /// <param name="args">An array of arguments that match in number, order, and type the parameters of the constructor to invoke.
+    /// If <c>args</c> is an empty array or null, the constructor that takes no parameters (the parameterless constructor) is invoked.</param>
+    /// <returns>The constructed object</returns>
+    /// <exception cref="Exception">Thrown when <c>Construct</c> fails to construct the type</exception>
     public static object Construct(string typeName, object?[] args)
         => Activator.CreateInstance(ResolveType(typeName), args)
            ?? throw new Exception($"could not construct {typeName}");
 
     // non-godot
     /// <summary>
-    /// 
+    /// Reads the value of an instance field or property by name, using reflection.
     /// </summary>
-    /// <param name="instance"></param>
-    /// <param name="name"></param>
-    /// <returns>An object representing the return value of the invoked member.</returns>
+    /// <param name="instance">the object that contains the member</param>
+    /// <param name="name">name of the member invoked</param>
+    /// <returns>The current value of the field or property</returns>
     public static object? GetMember(object instance, string name)
         => instance.GetType().InvokeMember(name,
             BindingFlags.GetField | BindingFlags.GetProperty | Inst, null, instance, null);
     
     /// <summary>
-    /// 
+    /// Sets the value of an instance field or property by name
     /// </summary>
-    /// <param name="instance"></param>
-    /// <param name="name"></param>
-    /// <param name="value"></param>
+    /// <param name="instance">the object that contains the member</param>
+    /// <param name="name">name of the member invoked</param>
+    /// <param name="value">The value to set</param>
     public static void SetMember(object instance, string name, object? value)
         => instance.GetType().InvokeMember(name,
             BindingFlags.SetField | BindingFlags.SetProperty | Inst, null, instance, [value]);
@@ -273,7 +278,7 @@ public static class Primitives
     /// <summary>
     /// Calls a member of an object
     /// </summary>
-    /// <param name="instance">The instance to call</param>
+    /// <param name="instance">The object that contains the member</param>
     /// <param name="name">The name of the member to invoke</param>
     /// <param name="args">Args to pass along</param>
     /// <returns>An object representing the return value of the invoked member.</returns>

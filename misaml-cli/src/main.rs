@@ -92,7 +92,7 @@ force = false
 # game_dir = \"/home/you/.local/share/Steam/steamapps/common/Mnemonimov\"
 
 # Mods set to \"false\" are skipped, mods not listed here load normally.
-# (the name is the \"id\" from the mod's manifest).
+# (the name is the \"modId\" from the mod's manifest).
 [mods]
 ";
 
@@ -169,7 +169,7 @@ fn sync_mods(config_path: &Path, mods_dir: &Path) -> Result<()> {
             let id = std::fs::read_to_string(&manifest)
                 .ok()
                 .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-                .and_then(|v| v["id"].as_str().map(String::from));
+                .and_then(|v| v["modId"].as_str().map(String::from));
 
             match id {
                 Some(id) => installed.push(id),

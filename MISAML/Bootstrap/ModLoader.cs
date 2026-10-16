@@ -52,15 +52,69 @@ public static class ModLoader
         }
     }
     */
+
+    // exactly what is written in mod.json, every field optional
+    private record RawManifest(
+        string? ModId,
+        string? ModName,
+        string? Version,
+        string? Description,
+        string? Author,
+        string? Source,
+        string? SourceManifest,
+        string? MisamlVersion,
+        string? EntryAssembly,
+        string? EntryMethod,
+        string? EntryScript,
+        Dictionary<string, string>? Dependencies
+    );
+
+    // parsed and tidied version
     private record ModManifest(
         string Id,
         string Name,
         string Version,
         string? Description,
+        string? Author,
+        string? Source,
+        string? SourceManifest,
+        string? MisamlVersion,
         string? EntryAssembly,
         string? EntryMethod,
-        string? EntryScript
+        string? EntryScript,
+        IReadOnlyDictionary<string, string> Dependencies
     );
+
+    // match field names ignoring case, so modId and modid both work
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    private static ModManifest ParseManifest(string json)
+    {
+        var raw = JsonSerializer.Deserialize<RawManifest>(json, JsonOptions)
+            ?? throw new Exception("mod.json is empty");
+
+        var id = raw.ModId?.Trim();
+        if (string.IsNullOrEmpty(id))
+            throw new Exception("mod.json needs a modId");
+
+        return new ModManifest(
+            id,
+            raw.ModName ?? id,
+            raw.Version ?? "0.0.0",
+            raw.Description,
+            raw.Author,
+            raw.Source,
+            raw.SourceManifest,
+            raw.MisamlVersion,
+            raw.EntryAssembly,
+            raw.EntryMethod,
+            raw.EntryScript,
+            // dependency ids are compared ignoring case
+            new Dictionary<string, string>(
+                raw.Dependencies ?? new Dictionary<string, string>(),
+                StringComparer.OrdinalIgnoreCase)
+        );
+    }
 
     public static void LoadMods(string modsDir, Action<string> log)
     {
@@ -97,6 +151,9 @@ public static class ModLoader
         var disabled = (Environment.GetEnvironmentVariable("MISAML_DISABLED_MODS") ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries);
 
+        // mod id -> the folder that claimed it first
+        var idOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var modDir in _modDirs)
         {
             var manifestPath = Path.Combine(modDir, "mod.json");
@@ -109,12 +166,7 @@ public static class ModLoader
             ModManifest? manifest;
             try
             {
-                var json = File.ReadAllText(manifestPath);
-
-                // json deserializer, makes sense, it goes to ModManifest record
-                manifest = JsonSerializer.Deserialize<ModManifest>(json,
-                    /* PropertyNameCaseInsensitive is like #[rename] in rust. */
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                manifest = ParseManifest(File.ReadAllText(manifestPath));
             }
             catch (Exception e)
             {
@@ -128,7 +180,13 @@ public static class ModLoader
                 continue;
             }
 
-            if (disabled.Contains(manifest.Id))
+            if (!idOwners.TryAdd(manifest.Id, modDir))
+            {
+                log($"skipping {modDir}: mod id '{manifest.Id}' is already used by {idOwners[manifest.Id]}");
+                continue;
+            }
+
+            if (disabled.Contains(manifest.Id, StringComparer.OrdinalIgnoreCase))
             {
                 _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null, manifest.Description));
                 log($"{manifest.Id}: disabled, not loading");
@@ -247,7 +305,7 @@ public static class ModLoader
         var methodName = manifest.EntryMethod[(split + 1)..];   
 
         var entryType = asm.GetType(className)
-            ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryPoint is Namespace.Class.Method)");
+            ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");
 
         var initMethod = entryType.GetMethod(
                 methodName, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)

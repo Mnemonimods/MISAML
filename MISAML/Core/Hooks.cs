@@ -29,6 +29,12 @@ public static class Hooks
     // lower runs first
     public const int DefaultPriority = 100;
 
+    // priority the given for a mod in misaml.toml, wins over whatever the mod
+    // passes to Register
+    private static readonly ConcurrentDictionary<string, int> ModPriorities = new(StringComparer.OrdinalIgnoreCase);
+
+    public static void SetModPriority(string modId, int priority) => ModPriorities[modId] = priority;
+
     // tracks the id of the mod which is currently initializing, incl.
     // across threads/async work
     private static readonly System.Threading.AsyncLocal<string?> CurrentMod = new();
@@ -102,6 +108,7 @@ public static class Hooks
 
         var key = Key(typeName, methodName);
         var owner = Describe(handler);
+        if (ModPriorities.TryGetValue(owner, out var configured)) priority = configured;
         int pos;
         int total;
 

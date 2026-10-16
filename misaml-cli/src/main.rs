@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap, os::unix::process::CommandExt, path::{Component, Path, PathBuf}, process::Command,
+    os::unix::process::CommandExt, path::{Component, Path, PathBuf}, process::Command,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -11,7 +11,6 @@ struct Config {
     debug: bool,
     force: bool,
     game_dir: Option<PathBuf>,
-    mods: BTreeMap<String, bool>,
 }
 
 // Known hashes of the game's DLLs
@@ -91,8 +90,12 @@ force = false
 # uncomment and set this if that fails or you want to use a different copy.
 # game_dir = \"/home/you/.local/share/Steam/steamapps/common/Mnemonimov\"
 
-# Mods set to \"false\" are skipped, mods not listed here load normally.
-# (the name is the \"modId\" from the mod's manifest).
+# Every installed mod gets a line here, set a line to false to turn off the mod.
+# The name is the \"modId\" from the mod's manifest.
+# A mod can also be a table, for example:
+#   example-mod = { enabled = true, priority = 10, version = \"0.0.0\" }
+# Priority is a whole number from 0 to 65535, lower runs first (default 100).
+# It decides whose hook runs first when two mods hook the same thing.
 [mods]
 ";
 
@@ -285,19 +288,11 @@ fn cmd_launch(force: bool) -> Result<()> {
     log!("  core: {}", payload_dir.display());
     log!("  framework: {}", framework_dir.display());
 
-    let disabled: Vec<&str> = config
-        .mods
-        .iter()
-        .filter(|(_, on)| !**on)
-        .map(|(id, _)| id.as_str())
-        .collect();
-
     let mut cmd = Command::new(&exe_path);
     cmd.current_dir(&game_dir)
         .env("LD_PRELOAD", &shim_path)
         .env("MISAML_CORE_DIR", &payload_dir)
-        .env("MISAML_FRAMEWORK_DIR", &framework_dir)
-        .env("MISAML_DISABLED_MODS", disabled.join(","));
+        .env("MISAML_FRAMEWORK_DIR", &framework_dir);
     if config.debug {
         cmd.env("MISAML_DEBUG", "1");
     }

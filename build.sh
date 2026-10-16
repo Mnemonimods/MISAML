@@ -52,7 +52,7 @@ stage_bootstrap() {
     ilrepack=$(find "$HOME/.nuget/packages/ilrepack" -name "ILRepack.exe" | sort -V | tail -1)
     [ -n "$ilrepack" ] || { err "ILRepack.exe not found in NuGet cache, did 'dotnet add package ILRepack' run inside MISAML?"; exit 1; }
 
-    log "Merging Tomlyn.dll into MISAML.Bootstrap.dll..."
+    log "Merging Tomlyn.dll and Semver.dll into MISAML.Bootstrap.dll..."
     dotnet "$ilrepack" \
         /target:library \
         /lib:"$BOOTSTRAP_PUBLISH" \

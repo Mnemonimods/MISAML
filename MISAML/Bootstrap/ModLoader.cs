@@ -148,8 +148,13 @@ public static class ModLoader
         _modDirs.AddRange(Directory.GetDirectories(modsDir).OrderBy(dir => dir, StringComparer.Ordinal));
         BuilDllIdx(log);
 
-        var disabled = (Environment.GetEnvironmentVariable("MISAML_DISABLED_MODS") ?? "")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries);
+        // misaml.toml sits next to the mods folder
+        var settings = ModSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")), log);
+        if (settings == null)
+        {
+            log("not loading any mods, because misaml.toml could not be read (fix it, or delete it to get a new one)");
+            return;
+        }
 
         // mod id -> the folder that claimed it first
         var idOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -186,11 +191,40 @@ public static class ModLoader
                 continue;
             }
 
-            if (disabled.Contains(manifest.Id, StringComparer.OrdinalIgnoreCase))
+            settings.TryGetValue(manifest.Id, out var setting);
+
+            if (setting is { Enabled: false })
             {
                 _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null, manifest.Description));
                 log($"{manifest.Id}: disabled, not loading");
                 continue;
+            }
+
+            // misaml.toml can pin which version of a mod the user wants
+            if (setting?.Version is string pin)
+            {
+                var range = VersionReq.TryParse(pin, out var pinError);
+                var installed = VersionReq.ParseVersion(manifest.Version);
+
+                string? problem =
+                    range == null ? $"the version in misaml.toml {pinError}" :
+                    installed == null ? $"mod version '{manifest.Version}' is not a version like 1.2.3, so it can't be checked against '{pin}'" :
+                    !range.Contains(installed) ? $"installed version {manifest.Version} does not match '{pin}' from misaml.toml" :
+                    null;
+
+                if (problem != null)
+                {
+                    _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, false, problem, manifest.Description));
+                    log($"{manifest.Id}: not loading, {problem}");
+                    continue;
+                }
+            }
+
+            // the user's priority for this mod, used for every hook it registers
+            if (setting?.Priority is int priority)
+            {
+                Hooks.SetModPriority(manifest.Id, priority);
+                log($"{manifest.Id}: priority {priority} from misaml.toml");
             }
 
             // a mod is a dll (entryAssembly), a GDScript (script), or both

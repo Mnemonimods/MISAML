@@ -328,7 +328,9 @@ public static class Hooks
                     continue;
                 }
 
-                found.Add(method);
+                // a method found through a child type is a different MethodInfo from
+                // the declared one, and Harmony only accepts the declared one
+                found.Add(DeclaredVersion(method));
             }
 
             if (signature != null && found.Count == 0 && sameName.Count > 0)
@@ -345,6 +347,12 @@ public static class Hooks
 
         return found;
     }
+
+    // the MethodInfo as seen from the type that declares it, as Harmony refuses
+    // a copy obtained from a child type
+    private static MethodInfo DeclaredVersion(MethodInfo method)
+        => MethodBase.GetMethodFromHandle(method.MethodHandle, method.DeclaringType!.TypeHandle) as MethodInfo
+            ?? method;
 
     private static void ApplyPatches(List<MethodInfo> methods, string patchKey)
     {

@@ -156,6 +156,16 @@ public static class ModLoader
             return;
         }
 
+        // MISAML's own version, read from MISAML.dll itself instead, set in csproj
+        var misamlVer = typeof(Hooks).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+        var installedMisaml = misamlVer == null ? null : VersionReq.ParseVersion(misamlVer);
+        if (installedMisaml == null)
+        {
+            log($"could not read MISAML's own version ('{misamlVer}')");
+        }
+
         // mod id -> the folder that claimed it first
         var idOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -198,6 +208,16 @@ public static class ModLoader
                 _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null, manifest.Description));
                 log($"{manifest.Id}: disabled, not loading");
                 continue;
+            }
+
+            // a mod made for another MISAML ver only gets a warning, still loads
+            if (manifest.MisamlVersion is string wanted && installedMisaml != null)
+            {
+                var wantedRange = VersionReq.TryParse(wanted, out var wantedError);
+                if (wantedRange == null)
+                    log($"{manifest.Id}: misamlVersion {wantedError}, can't check it");
+                else if (!wantedRange.Contains(installedMisaml))
+                    log($"{manifest.Id}: WARNING: made for MISAML {wanted}, but this is MISAML {installedMisaml}, issues may occur");
             }
 
             // misaml.toml can pin which version of a mod the user wants
@@ -248,7 +268,7 @@ public static class ModLoader
                 // one broken mod never takes others down with it, Invoke()
                 // wraps errors, show the real one
                 var ue = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
-                err = $"{ue.GetType().Name}: {ue.Message}";
+                err = $"{ue.GetType().Name}: {ue.Message.Trim()}";
             }
 
             _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));

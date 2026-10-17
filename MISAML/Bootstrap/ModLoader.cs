@@ -24,12 +24,12 @@ public static class ModLoader
 
     // every mod folder, sorted so load order is the same every time ran
     private static readonly List<string> _modDirs = [];
-    
+
     // assembly name -> full path, for every DLL in every mod folder 
     // incl. subfolders. before any mod loads, the Resolving hook looks
     // up names here
     private static readonly Dictionary<string, string> _dllIndex = new(StringComparer.OrdinalIgnoreCase);
-    
+
     private static bool _resolvingHooked = false;
 
     /*
@@ -268,7 +268,7 @@ public static class ModLoader
         {
             try
             {
-                
+
                 var dlls = Directory
                     .EnumerateFiles(modDir, "*.dll", SearchOption.AllDirectories) /* find all dlls in the mod dir and subdirs */
                     .Where(path => !IsBuildOutput(modDir, path)) /* skip build output dirs */
@@ -329,14 +329,14 @@ public static class ModLoader
 
         if (manifest.EntryMethod == null)
             throw new Exception("entryAssembly needs entryMethod in mod.json (Hint: Namespace.Class.Method)");
-        
+
         // split at the last dot, before it is the class, after it's the method
         var split = manifest.EntryMethod.LastIndexOf('.');
         if (split <= 0 || split == manifest.EntryMethod.Length - 1)
             throw new Exception($"entryMethod '{manifest.EntryMethod}' must look like Namespace.Class.Method (or Class.Method with no namespace)");
 
         var className = manifest.EntryMethod[..split];
-        var methodName = manifest.EntryMethod[(split + 1)..];   
+        var methodName = manifest.EntryMethod[(split + 1)..];
 
         var entryType = asm.GetType(className)
             ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");

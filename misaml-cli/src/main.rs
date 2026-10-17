@@ -1,5 +1,8 @@
 use std::{
-    os::unix::process::CommandExt, path::{Component, Path, PathBuf}, process::Command,
+    collections::BTreeMap,
+    os::unix::process::CommandExt,
+    path::{Component, Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -45,9 +48,8 @@ const RUNTIME_VERSION: &str = "8.0.30";
 mod platform {
     pub const RUNTIME_PACKAGE: &str = "win-x64.zip";
     pub const GAME_EXE: &str = "mnemonimov.exe";
-    pub const GAME_EXE_HASHES: &[&str] = &[
-        "63fcd750c72581592ef20c8b4ea031cc", /* 2026-10-12 */
-    ];
+    pub const GAME_EXE_HASHES: &[&str] =
+        &["63fcd750c72581592ef20c8b4ea031cc" /* 2026-10-12 */];
     pub const SHIM_NAME: &str = "libmisaml_shim.dll";
     pub const DATA_DIR: &str = "data_Mnemonimov_windows_x86_64";
 }
@@ -207,8 +209,7 @@ fn sync_mods(config_path: &Path, mods_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn check_file(path: &Path, name: &str, known: &[&str], mismatch: &mut Vec<String>) -> Result<()>
-{
+fn check_file(path: &Path, name: &str, known: &[&str], mismatch: &mut Vec<String>) -> Result<()> {
     require_exists(path, name)?;
 
     let hash = format!("{:x}", md5::compute(std::fs::read(path)?));
@@ -469,7 +470,7 @@ fn wanted_runtime_file(path: &Path) -> Option<String> {
             if shared == "shared"
                 && framework == "Microsoft.NETCore.App"
                 && version == RUNTIME_VERSION
-                && name.to_ascii_lowercase().ends_with(".dll") => 
+                && name.to_ascii_lowercase().ends_with(".dll") =>
         {
             // on windows, the framework folder also holds native DLLs
             // (coreclr.dll & others), redo when Windows work continues
@@ -521,10 +522,14 @@ fn ensure_runtime(payload_dir: &Path) -> Result<()> {
     let parent = framework_dir
         .parent()
         .context("runtime folder has no parent directory")?;
-    
+
     std::fs::create_dir_all(parent)?;
-    std::fs::rename(&staging_dir, &framework_dir)
-        .with_context(|| format!("could not move the runtime into {}", framework_dir.display()))?;
+    std::fs::rename(&staging_dir, &framework_dir).with_context(|| {
+        format!(
+            "could not move the runtime into {}",
+            framework_dir.display()
+        )
+    })?;
 
     log!("Runtime {RUNTIME_VERSION} ready! ({kept} framework DLLs)");
 
@@ -582,7 +587,7 @@ fn extract_runtime_archive(reader: impl std::io::Read, dest_dir: &Path) -> Resul
 
             let mut out = std::fs::File::create(dest_dir.join(&name))
                 .with_context(|| format!("could not write {name}"))?;
-            
+
             std::io::copy(&mut file, &mut out)
                 .with_context(|| format!("could not extract {name}"))?;
 
@@ -612,7 +617,7 @@ fn extract_runtime_archive(reader: impl std::io::Read, dest_dir: &Path) -> Resul
             entry
                 .unpack(dest_dir.join(&name))
                 .with_context(|| format!("could not extract {name}"))?;
-            
+
             kept += 1;
         }
     }

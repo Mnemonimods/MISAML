@@ -109,6 +109,7 @@ internal static class Search
         "RestoreGodotObjectData",
         "GetGodotMethodList",
         "GetGodotPropertyList",
+        "InvokeGodotClassStaticMethod",
     ];
 
     // remember, array of Godot Type things!!!!

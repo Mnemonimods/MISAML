@@ -32,6 +32,14 @@ public static class ModLoader
 
     private static bool _resolvingHooked = false;
 
+    // the game's own assembly load context, a mod that references the game's
+    // DLLs must get the game's copy, a second copy is a different set of types
+    internal static AssemblyLoadContext? GameContext { get; set; }
+
+    // the game's already loaded copy of an assembly, or null if it has none
+    private static Assembly? FindInGame(AssemblyName name)
+        => GameContext?.Assemblies.FirstOrDefault(a => a.GetName().Name == name.Name);
+
     /*
     an example mod.json:
 
@@ -132,6 +140,9 @@ public static class ModLoader
             _resolvingHooked = true;
             AssemblyLoadContext.Default.Resolving += (ctx, name) =>
             {
+                var shared = FindInGame(name);
+                if (shared != null) return shared;
+
                 if (name.Name != null && _dllIndex.TryGetValue(name.Name, out var path))
                 {
                     log($"resolved dependency '{name.Name}' => {path}");

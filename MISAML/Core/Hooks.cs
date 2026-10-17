@@ -113,6 +113,38 @@ public static class Hooks
         Func<object?, object?[], HookResult> handler
     ) => Register(typeName, methodName, handler, DefaultPriority);
 
+    // same as string versions, but takes the type itself, so a mod that
+    // references the game's assemblies gets autocomplete and compile errors
+    // instead of typos
+    public static void Register(
+        Type type,
+        string methodName,
+        Func<object?, object?[], HookResult> handler
+    ) => Register(type, methodName, handler, DefaultPriority);
+
+    public static bool Register(
+        Type type,
+        string methodName,
+        Func<object?, object?[], HookResult> handler,
+        int priority
+    )
+    {
+        if (type?.FullName == null)
+        {
+            Log($"failed to register '{type}::{methodName}'. a type with a full name is required!");
+            return false;
+        }
+
+        return Register(type.FullName, methodName, handler, priority);
+    }
+
+    // Hooks.Register<VirtualMachine>(nameof(VirtualMachine.HandleSystemCall), handler)
+    public static bool Register<T>(
+        string methodName,
+        Func<object?, object?[], HookResult> handler,
+        int priority = DefaultPriority
+    ) => Register(typeof(T), methodName, handler, priority);
+
     // same as prev register, with a priority, lower numbers run first
     // Returns false and logs why if the reg is not accepted
     /// <summary>
@@ -313,6 +345,14 @@ public static class Hooks
             foreach (var method in sameName)
             {
                 if (signature != null && signature != "*" && SignatureOf(method) != signature) continue;
+                
+                // a static call has no instance, so there's no way to tell which
+                // child type it came through
+                if (method.IsStatic && method.DeclaringType != type)
+                {
+                    Log($"{typeName}::{methodName} is a static method declared on {method.DeclaringType?.FullName}, register the handler on that type instead");
+                    continue;
+                }
 
                 if (method.IsAbstract || method.IsGenericMethodDefinition)
                 {

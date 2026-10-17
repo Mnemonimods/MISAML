@@ -217,7 +217,7 @@ public static class ModLoader
                 if (wantedRange == null)
                     log($"{manifest.Id}: misamlVersion {wantedError}, can't check it");
                 else if (!wantedRange.Contains(installedMisaml))
-                    log($"{manifest.Id}: WARNING: made for MISAML {wanted}, but this is MISAML {installedMisaml}, issues may occur");
+                    log($"{manifest.Id}: WARNING: made for MISAML {wanted}, but this is MISAML {installedMisaml}, issues may occur.");
             }
 
             // misaml.toml can pin which version of a mod the user wants

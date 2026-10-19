@@ -28,10 +28,20 @@ public static class StartupHook
     internal static readonly bool DebugEnabled
         = Environment.GetEnvironmentVariable("MISAML_DEBUG") != null;
 
+    private static readonly object LogLock = new();
+
     internal static void Log(string @class, string message)
     {
         var line = $"{_stopwatch.Elapsed.TotalSeconds:F6} [MISAML.Core.{@class}] {message}";
-        File.AppendAllText(LogPath, line + "\n");
+
+        try
+        {
+            lock (LogLock) File.AppendAllText(LogPath, line + "\n");
+        }
+        catch
+        {
+            // logging must never break the game or a hook
+        }
     }
 
     private static void Log(string message) => Log(nameof(StartupHook), message);

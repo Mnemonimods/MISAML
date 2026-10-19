@@ -2,5 +2,12 @@
 resolver = "2"
 members = [
     "misaml-shim",
-    "misaml-cli",
+    "misaml-cli", 
+    "misaml-pck",
 ]
+
+[profile.release]
+panic = "abort"
+
+[profile.dev]
+panic = "abort"

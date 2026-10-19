@@ -9,7 +9,23 @@ target/
 *.user
 
 # Misc
-/Decompiled/
-/dist/
+**/[Dd]ecompiled/
+**/[Ee]xtracted/
+**/dist/
 *.log
 *.vscode
+**.bak
+**.cpp
+**.gdc
+**/[Nn]otes/
+godot-*/
+**/vendor/
+test.md
+.idea
+mnemonimov-*/
+extracted/
+GDRETools/
+*.il
+
+# BYO GodotSharp.dll, please! (it's in the game directory, too), if installing the GodotSharp.dll from Nuget, the package version is 4.5.1
+MISAML.Core/vendor/GodotSharp.dll 

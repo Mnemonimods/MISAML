@@ -7,73 +7,108 @@ err() { echo "[build] ERROR: $*" >&2; }
 
 SHIM="target/release/libmisaml_shim.so"
 CLI="target/release/misaml-cli"
-CORE_PUBLISH="MISAML.Core/bin/Release/net8.0/publish"
+CORE_PUBLISH="MISAML/bin/Release/net8.0/publish"
+BOOTSTRAP_PUBLISH="MISAML/Bootstrap/bin/Release/net8.0/publish"
+GODOTAPI_PUBLISH="MISAML/GodotAPI/bin/Release/net8.0/publish"
+DOTNET_ARGS=()
 
-RUNTIME_VERSION="8.0.30"
-RUNTIME_URL="https://builds.dotnet.microsoft.com/dotnet/Runtime/${RUNTIME_VERSION}/dotnet-runtime-${RUNTIME_VERSION}-linux-x64.tar.gz"
-
-do_build() {
+compile() {
     log "Building Rust..."
     cargo build --release
 
-    log "Publishing MISAML.Core..."
-    (cd MISAML.Core && dotnet publish -c Release)
+    log "Publishing MISAML.Bootstrap..."
+    (cd MISAML/Bootstrap && dotnet publish -c Release "${DOTNET_ARGS[@]}")
 
-    log "Staging dist..."
-    rm -rf dist
-    mkdir -p dist/core
+    log "Publishing MISAML..."
+    (cd MISAML && dotnet publish -c Release "${DOTNET_ARGS[@]}")
+
+    log "Publishing MISAML.GodotAPI..."
+    (cd MISAML/GodotAPI && dotnet publish -c Release "${DOTNET_ARGS[@]}")
 
     for f in "$SHIM" "$CLI"; do
         [ -f "$f" ] || { err "Missing: $f"; exit 1; }
     done
 
-    [ -d "$CORE_PUBLISH" ] || {
-        err "Missing: $CORE_PUBLISH"
-        exit 1
-    }
+    [ -d "$CORE_PUBLISH" ] || { err "Missing: $CORE_PUBLISH"; exit 1; }
+    [ -d "$BOOTSTRAP_PUBLISH" ] || { err "Missing: $BOOTSTRAP_PUBLISH"; exit 1; }
+    [ -d "$GODOTAPI_PUBLISH" ] || { err "Missing: $GODOTAPI_PUBLISH"; exit 1; }
+}
 
-    log "Downloading .NET runtime ${RUNTIME_VERSION}..."
-    curl -fL "$RUNTIME_URL" | tar -xz -C dist/core
+merge_dll() {
+    local ilrepack
+    ilrepack=$(find "$HOME/.nuget/packages/ilrepack" -name "ILRepack.exe" | sort -V | tail -1)
+    [ -n "$ilrepack" ] || { err "ILRepack.exe not found in NuGet cache, did 'dotnet add package ILRepack' run inside MISAML?"; exit 1; }
 
-    cp "$SHIM" dist/
+    log "Merging 0Harmony.dll into MISAML.dll..."
+    dotnet "$ilrepack" \
+        /target:library \
+        /lib:MISAML/vendor \
+        /out:dist/MISAML/MISAML.dll \
+        "$CORE_PUBLISH/MISAML.dll" \
+        "$CORE_PUBLISH/0Harmony.dll"
+}
+
+stage_bootstrap() {
+    local ilrepack
+    ilrepack=$(find "$HOME/.nuget/packages/ilrepack" -name "ILRepack.exe" | sort -V | tail -1)
+    [ -n "$ilrepack" ] || { err "ILRepack.exe not found in NuGet cache, did 'dotnet add package ILRepack' run inside MISAML?"; exit 1; }
+
+    log "Merging Tomlyn.dll, Semver.dll and Microsoft.Extensions.Primitives into MISAML.Bootstrap.dll..."
+    dotnet "$ilrepack" \
+        /target:library \
+        /lib:"$BOOTSTRAP_PUBLISH" \
+        /out:dist/MISAML/MISAML.Bootstrap.dll \
+        "$BOOTSTRAP_PUBLISH/MISAML.Bootstrap.dll" \
+        "$BOOTSTRAP_PUBLISH/Tomlyn.dll" \
+        "$BOOTSTRAP_PUBLISH/Semver.dll" \
+        "$BOOTSTRAP_PUBLISH/Microsoft.Extensions.Primitives.dll"
+}
+
+stage_binaries() {
+    mkdir -p dist/MISAML
     cp "$CLI" dist/
+    cp "$SHIM" dist/MISAML/
+    cp "$GODOTAPI_PUBLISH/MISAML.GodotAPI.dll" dist/MISAML/
+    stage_bootstrap
+    merge_dll
+}
 
-    cp "$CORE_PUBLISH"/*.dll dist/
+do_build() {
+    compile
 
-    log "dist/ ready, run: ./dist/misaml-cli"
+    log "Staging dist..."
+    mkdir -p dist/MISAML
+    rm -f dist/misaml-cli dist/MISAML/libmisaml_shim.so dist/MISAML/MISAML.dll dist/MISAML/MISAML.Bootstrap.dll dist/MISAML/MISAML.GodotAPI.dll
+    stage_binaries
+
+    log "dist/ ready:"
+    find dist -maxdepth 4 | sort
+
+    log "Run with: ./dist/misaml-cli"
+}
+
+do_build_release() {
+    log "Release build, from clean, without the git commit in the version..."
+    do_clean_csharp
+    DOTNET_ARGS=(-p:IncludeSourceRevisionInInformationalVersion=false)
+    do_build
 }
 
 do_rebuild() {
-    log "Rebuilding Rust..."
-    cargo build --release
-
-    log "Publishing MISAML.Core..."
-    (cd MISAML.Core && dotnet publish -c Release)
-
-    [ -d "dist/core" ] || {
-        err "dist/core does not exist. Run './build.sh build' first."
+    [ -d "dist" ] || {
+        err "dist/ not found. Run './build.sh build' first."
         exit 1
     }
 
-    for f in "$SHIM" "$CLI"; do
-        [ -f "$f" ] || { err "Missing: $f"; exit 1; }
-    done
+    compile
 
-    [ -d "$CORE_PUBLISH" ] || {
-        err "Missing: $CORE_PUBLISH"
-        exit 1
-    }
+    log "Restaging binaries..."
+    stage_binaries
 
-    log "Updating dist/ without reinstalling .NET runtime..."
+    log "Rebuild complete:"
+    find dist -maxdepth 4 | sort
 
-    cp "$SHIM" dist/
-    cp "$CLI" dist/
-
-    find dist -maxdepth 1 -type f -name '*.dll' -delete
-
-    cp "$CORE_PUBLISH"/*.dll dist/
-
-    log "Rebuild complete, run: ./dist/misaml-cli"
+    log "Run with: ./dist/misaml-cli"
 }
 
 do_run() {
@@ -85,22 +120,31 @@ do_run() {
     ./dist/misaml-cli
 }
 
-do_clean() {
-    log "Cleaning build artifacts..."
+do_clean_rust() {
+    log "Cleaning Rust build artifacts..."
     cargo clean
-    rm -rf \
-        MISAML.Core/bin \
-        MISAML.Core/obj
 }
 
-do_clean_dist() {
-    log "Cleaning dist..."
-    rm -rf dist
+do_clean_csharp() {
+    log "Cleaning C# build artifacts..."
+    rm -rf MISAML/bin MISAML/obj
+    rm -rf MISAML/Bootstrap/bin MISAML/Bootstrap/obj
+    rm -rf MISAML/GodotAPI/bin MISAML/GodotAPI/obj
+}
+
+do_clean() {
+    do_clean_rust
+    do_clean_csharp
+}
+
+do_clean_runtime() {
+    log "Cleaning bundled .NET runtime..."
+    rm -rf dist/MISAML/runtime
 }
 
 do_clean_all() {
     do_clean
-    do_clean_dist
+    rm -rf dist
 }
 
 usage() {
@@ -108,21 +152,27 @@ usage() {
 Usage: ./build.sh <command>
 
 Commands:
-  build        Build everything and stage dist/
-  rebuild      Rebuild Rust/Core without reinstalling .NET runtime
-  run          Launch ./dist/misaml-cli
-  clean        Remove build artifacts
-  clean-dist   Remove dist/
-  clean-all    Remove all build artifacts
+  build          Build Rust + MISAML and stage dist/
+  build-release  Build, but from clean, and without git commit in the version for C#
+  rebuild        Rebuild and restage binaries
+  run            Launch ./dist/misaml-cli
+  clean          Remove all code build artifacts (clean-rust + clean-csharp)
+  clean-rust     Remove Rust build artifacts (target/)
+  clean-csharp   Remove C# build artifacts (MISAML/bin, MISAML/obj, MISAML/Bootstrap/bin, MISAML/Bootstrap/obj, etc.)
+  clean-runtime  Remove the bundled .NET runtime
+  clean-all      Remove everything (clean + dist/)
 EOF
 }
 
 case "${1:-}" in
-    build)      do_build ;;
-    rebuild)    do_rebuild ;;
-    run)        do_run ;;
-    clean)      do_clean ;;
-    clean-dist) do_clean_dist ;;
-    clean-all)  do_clean_all ;;
-    *)          usage; exit 1 ;;
+    build)          do_build ;;
+    build-release)  do_build_release ;;
+    rebuild)        do_rebuild ;;
+    run)            do_run ;;
+    clean)          do_clean ;;
+    clean-rust)     do_clean_rust ;;
+    clean-csharp)   do_clean_csharp ;;
+    clean-runtime)  do_clean_runtime ;;
+    clean-all)      do_clean_all ;;
+    *)              usage; exit 1 ;;
 esac

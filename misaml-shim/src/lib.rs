@@ -2,24 +2,44 @@
 //
 // The purpose of this crate is to make the games trimmed CoreCLR usable,
 // load one managed bootstrap dll, call it.
-// 
+//
 // Mods & Harmony are managed in MISAML.Core
+
+use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicU8, Ordering},
+};
+
+use crate::ffi::{BootstrapFn, CoreclrCreateDelegateFn, CoreclrInitializeFn};
+use crate::tpa::Assembly;
+
+// reads MISAML_DEBUG once and remembers the answer
+pub(crate) fn debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("MISAML_DEBUG").is_some())
+}
+
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        if $crate::debug_enabled() {
+            eprintln!(concat!("[misaml-shim ", env!("CARGO_PKG_VERSION"), "] {}"), format!($($arg)*));
+        }
+    };
+}
+
+macro_rules! log {
+    ($($arg:tt)*) => {
+        eprintln!(concat!("[misaml-shim ", env!("CARGO_PKG_VERSION"), "] {}"), format!($($arg)*));
+    };
+}
 
 mod ffi;
 mod redirect;
 mod tpa;
 
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicU8, Ordering},
-};
-use std::ffi::{c_char, c_int, c_uint, c_void, CStr, CString};
-
-use ffi::{BootstrapFn, CoreclrCreateDelegateFn, CoreclrInitializeFn, Open64Fn};
-
-use crate::tpa::Assembly;
-
-const BUILD_ID: &str = env!("CARGO_PKG_VERSION");
+#[cfg(target_os = "linux")]
+mod linux;
 
 #[repr(u8)]
 enum InitState {
@@ -32,89 +52,12 @@ enum InitState {
 // prevents coreclr_initialize from running this setup twice
 static INIT_STATE: AtomicU8 = AtomicU8::new(InitState::Uninitialized as u8);
 
-static REAL_INITIALIZE: OnceLock<CoreclrInitializeFn> = OnceLock::new();
-static CORECLR_HANDLE: OnceLock<usize> = OnceLock::new();
+// the platform entry points, fill these in when the
+// game looks up coreclr_initialize
+pub(crate) static REAL_INITIALIZE: OnceLock<CoreclrInitializeFn> = OnceLock::new();
+pub(crate) static CORECLR_HANDLE: OnceLock<usize> = OnceLock::new();
 
-
-
-// only prints if MISAML_DEBUG is set, for debug
-macro_rules! debug_log {
-    ($($arg:tt)*) => {
-        if std::env::var_os("MISAML_DEBUG").is_some() {
-            eprintln!("[misaml-shim {BUILD_ID}] {}", format!($($arg)*));
-        }
-    };
-}
-
-macro_rules! log {
-    ($($arg:tt)*) => {
-        eprintln!("[misaml-shim {BUILD_ID}] {}", format!($($arg)*));
-    };
-}
-
-/// Intercepts `dlsym` lookups for `coreclr_initialize`.
-///
-/// # Safety
-///
-/// `symbol` must point to a valid NUL-terminated C string.
-/// `handle` must be a valid dynamic linker handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn dlsym(
-    handle: *mut c_void,
-    symbol: *const c_char,
-) -> *mut c_void {
-    if symbol.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let name = unsafe { CStr::from_ptr(symbol) }.to_string_lossy();
-
-    // replace only the coreclr_initialize lookup, every other symbol is
-    // passed directly through to the real dynamic linker
-    if name == "coreclr_initialize" {
-        debug_log!("intercepted dlsym lookup for coreclr_initialize");
-
-        let real = unsafe { ffi::resolve(handle, c"coreclr_initialize") };
-        if real.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        // save the real fn + handle so hooked_initialize/bootstrap_managed
-        // can use them later without recursing into our own dlsym
-        let real_fn: CoreclrInitializeFn = unsafe { std::mem::transmute(real) };
-        let _ = REAL_INITIALIZE.set(real_fn);
-        let _ = CORECLR_HANDLE.set(handle as usize);
-
-        return hooked_initialize as *mut c_void;
-    }
-
-    match ffi::real_dlsym() {
-        Some(real_dlsym) => unsafe { real_dlsym(handle, symbol) },
-        None => std::ptr::null_mut(),
-    }
-}
-
-/// Redirects framework assembly opens to the complete .NET runtime copy.
-///
-/// # Safety
-///
-/// `pathname` must be a valid NUL-terminated C string when non-null.
-/// `flags` must be valid for libc's `open64`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn open64( 
-    // only reachable via LD_PRELOAD, never called ourselves
-    pathname: *const c_char,
-    flags: c_int,
-) -> c_int {
-    let real_ptr = unsafe { ffi::resolve(libc::RTLD_NEXT, c"open64") };
-    if real_ptr.is_null() {
-        return -1;
-    }
-    let real: Open64Fn = unsafe { std::mem::transmute(real_ptr) };
-    unsafe { redirect::hook(pathname, flags, real) }
-}
-
-unsafe extern "C" fn hooked_initialize(
+pub(crate) unsafe extern "C" fn hooked_initialize(
     exe_path: *const c_char,
     app_domain_friendly_name: *const c_char,
     property_count: c_int,
@@ -126,10 +69,7 @@ unsafe extern "C" fn hooked_initialize(
     // reset the state when setup fails before CoreCLR is initialized
     macro_rules! reset {
         () => {
-            INIT_STATE.store(
-                InitState::Uninitialized as u8,
-                Ordering::Release,
-            );
+            INIT_STATE.store(InitState::Uninitialized as u8, Ordering::Release);
         };
     }
 
@@ -167,8 +107,7 @@ unsafe extern "C" fn hooked_initialize(
 
     // reject obviously invaid input before constructing slices from native arrs
     if property_count < 0
-        || (property_count > 0
-            && (property_keys.is_null() || property_values.is_null()))
+        || (property_count > 0 && (property_keys.is_null() || property_values.is_null()))
         || host_handle.is_null()
         || domain_id.is_null()
     {
@@ -180,14 +119,12 @@ unsafe extern "C" fn hooked_initialize(
     let count = property_count as usize;
 
     // CoreCLR owns the og arrays, so cpy the ptr arrs instead of muting the mem directly
-    let keys: Vec<*const c_char> = unsafe { 
-        std::slice::from_raw_parts(property_keys, count) 
-    }.to_vec();
+    let keys: Vec<*const c_char> =
+        unsafe { std::slice::from_raw_parts(property_keys, count) }.to_vec();
 
-    let mut values: Vec<*const c_char> = unsafe {
-        std::slice::from_raw_parts(property_values, count)
-    }.to_vec();
-    
+    let mut values: Vec<*const c_char> =
+        unsafe { std::slice::from_raw_parts(property_values, count) }.to_vec();
+
     // has to stay alive until corecrl_initialize consumes
     let mut owned: Vec<CString> = Vec::new();
 
@@ -199,7 +136,7 @@ unsafe extern "C" fn hooked_initialize(
             redirect::set_game_runtime_dir(std::path::PathBuf::from(value_str.into_owned()));
         }
     }
-    
+
     let core_dir = match std::env::var("MISAML_CORE_DIR") {
         Ok(path) if std::path::Path::new(&path).is_dir() => path,
         _ => {
@@ -229,7 +166,7 @@ unsafe extern "C" fn hooked_initialize(
         let existing = unsafe { CStr::from_ptr(*value) }.to_string_lossy();
         let new_tpa = tpa::build_tpa(&existing, &framework_assemblies, &payload_assemblies);
 
-        debug_log!("new TPA built: {} entries", new_tpa.split(':').count());
+        debug_log!("new TPA built: {} entries", new_tpa.split(tpa::SEP).count());
 
         let Ok(cstr) = CString::new(new_tpa) else {
             log!("TPA value had a NUL byte, running unmodified");
@@ -266,20 +203,14 @@ unsafe extern "C" fn hooked_initialize(
     debug_log!("coreclr_initialize OK, host_handle={host:?}, domain_id={domain}");
 
     if !bootstrap_managed(host, domain) {
-        INIT_STATE.store(
-            InitState::Uninitialized as u8,
-            Ordering::Release,
-        );
+        INIT_STATE.store(InitState::Uninitialized as u8, Ordering::Release);
 
         // CoreCLR itself initialized successfully, so return the success
         // the managed bootstrap has its own fallback
         return result;
     }
 
-    INIT_STATE.store(
-        InitState::Initialized as u8,
-        Ordering::Release,
-    );
+    INIT_STATE.store(InitState::Initialized as u8, Ordering::Release);
 
     result
 }
@@ -307,17 +238,13 @@ fn bootstrap_managed(host_handle: *mut c_void, domain_id: c_uint) -> bool {
 
     // coreclr_create_delegate is exported by the same library that gave
     // coreclr_initialize, reuse the handle already saved
-    let fn_ptr = unsafe { 
-        ffi::resolve(handle, c"coreclr_create_delegate") 
-    };
+    let fn_ptr = unsafe { ffi::resolve(handle, c"coreclr_create_delegate") };
     if fn_ptr.is_null() {
         log!("coreclr_create_delegate not found, running unmodified");
         return false;
     }
 
-    let create_delegate: CoreclrCreateDelegateFn = unsafe { 
-        std::mem::transmute(fn_ptr) 
-    };
+    let create_delegate: CoreclrCreateDelegateFn = unsafe { std::mem::transmute(fn_ptr) };
 
     // the fully qualified managed method to invoke
     let mut delegate_ptr: *mut c_void = std::ptr::null_mut();
@@ -326,9 +253,9 @@ fn bootstrap_managed(host_handle: *mut c_void, domain_id: c_uint) -> bool {
         create_delegate(
             host_handle,
             domain_id,
-            c"MISAML.Core".as_ptr(),
-            c"MISAML.Core.StartupHook".as_ptr(),
-            c"Initialize".as_ptr(),
+            c"MISAML.Bootstrap".as_ptr(),
+            c"MISAML.Bootstrap.Loader".as_ptr(),
+            c"Handoff".as_ptr(),
             &mut delegate_ptr,
         )
     };
@@ -338,7 +265,7 @@ fn bootstrap_managed(host_handle: *mut c_void, domain_id: c_uint) -> bool {
         return false;
     }
 
-    debug_log!("calling MISAML.Core.StartupHook.Initialize()");
+    debug_log!("calling MISAML.Bootstrap.Entry.Handoff() in MISAML.dll");
 
     let bootstrap: BootstrapFn = unsafe { std::mem::transmute(delegate_ptr) };
     unsafe { bootstrap() };

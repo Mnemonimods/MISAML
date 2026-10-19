@@ -1,4 +1,5 @@
 <Solution>
-  <Project Path="MISAML.Core/MISAML.Core.csproj" />
-  <Project Path="MISAML.Patcher/MISAML.Patcher.csproj" />
+  <Project Path="MISAML/Bootstrap/MISAML.Bootstrap.csproj" />
+  <Project Path="MISAML/GodotAPI/MISAML.GodotAPI.csproj" />
+  <Project Path="MISAML/MISAML.csproj" />
 </Solution>

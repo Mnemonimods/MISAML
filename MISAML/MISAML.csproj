@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <Compile Remove="Bootstrap/**/*.cs" />
+    <Compile Remove="Bootstrap/**/obj/**/*.cs" />
+    <Compile Remove="Bootstrap/**/bin/**/*.cs" />
+    <Compile Remove="GodotAPI/**/*.cs" />
+    <Compile Remove="GodotAPI/**/obj/**/*.cs" />
+    <Compile Remove="GodotAPI/**/bin/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="GodotSharp" Version="4.5.1" />
+    <PackageReference Include="ILRepack" Version="2.0.48">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Lib.Harmony" Version="2.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+      <Reference Include="GodotSharp">
+          <HintPath>vendor/GodotSharp.dll</HintPath>
+          <Private>false</Private>
+      </Reference>
+  </ItemGroup>
+</Project>

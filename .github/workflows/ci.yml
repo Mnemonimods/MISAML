@@ -89,6 +89,3 @@ jobs:
 
       - name: Build
         run: dotnet build MISAML.slnx --no-restore --configuration Release -warnaserror
-
-      - name: Build dist
-        run: ./build.sh build

@@ -4,13 +4,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using MISAML.Debug;
+using MISAML.Interfaces;
 
 namespace MISAML.Core;
 
 // Runs in the .NET Default AssemblyLoadContext (see loader as to why).
 // Purpose: always hook GodotBridgePatch when Mnemonimov loads (bootstrap),
 // and if MISAML_DEBUG=1, run the MISAML.Debug methods.
-public class Core
+public class Core(IGodotBridgePatch godotBridgePatch) :ICore
 {
     // path for log file
     private static readonly string LogPath = Path.Combine(
@@ -45,7 +46,7 @@ public class Core
 
     internal static void DebugLog(string message) { if (DebugEnabled) Log(message); }
 
-    public static void Initialize()
+    public void Initialize()
     {
         Log(nameof(Core), "MISAML.Core starting...");
 
@@ -61,7 +62,7 @@ public class Core
             // lets Loader grab a live GodotObject later, not optional!!
             if (loadedName == "Mnemonimov")
             {
-                GodotBridgePatch.TryPatch(Hooks.Harmony, assembly);
+                godotBridgePatch.TryPatch(Hooks.Harmony, assembly);
             }
 
             // anything past here is just catalog stuff!!!!

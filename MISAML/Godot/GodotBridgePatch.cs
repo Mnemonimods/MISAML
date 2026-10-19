@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
+using MISAML.Interfaces;
 
 namespace MISAML.Core;
 
@@ -16,7 +17,7 @@ namespace MISAML.Core;
 // and reach the isolated AssemlyLoadContext. How to find this list:
 //   ilspycmd Mnemonimov.dll -o decompiled_mnemonimov -p
 //   grep -rl "GlobalClass" decompiled_mnemonimov/
-public static class GodotBridgePatch
+public class GodotBridgePatch : IGodotBridgePatch
 {
     private static void Log(string message) => Core.Log(nameof(GodotBridgePatch), message);
 
@@ -47,7 +48,7 @@ public static class GodotBridgePatch
     // context.
     public static event Action<object>? OnBridgeInstanceSeen;
 
-    public static void TryPatch(Harmony harmony, Assembly mnemonimovAssembly)
+    public void TryPatch(Harmony harmony, Assembly mnemonimovAssembly)
     {
         var prefix = new HarmonyMethod(
             typeof(GodotBridgePatch).GetMethod(nameof(BridgePrefix),

@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading;
 using MISAML.Core;
+using MISAML.Interfaces;
 
 namespace MISAML.Bootstrap;
 
@@ -56,7 +57,7 @@ namespace MISAML.Bootstrap;
 //
 // The bootstrap only does what is described above.
 
-public static class Loader
+public class Loader(IGodotBridge godotBridge, IModLoader modLoader)
 {
     private static readonly string LogPath = Path.Combine(
         Path.GetDirectoryName(typeof(Loader).Assembly.Location)!,
@@ -77,7 +78,7 @@ public static class Loader
     private static int _handoffStarted = 0;
 
     // Called once, directly by the Rust shim via coreclr_create_delegate
-    public static void Handoff()
+    public void Handoff()
     {
         File.WriteAllText(LogPath, ""); // clear log
 
@@ -106,7 +107,7 @@ public static class Loader
         };
     }
 
-    private static void Start(Assembly anchorAssembly)
+    private void Start(Assembly anchorAssembly)
     {
         try
         {
@@ -114,7 +115,7 @@ public static class Loader
             // switching. Harmony patches VirtualMachine.HandleSystemCall,
             // the 58 bridge methods, all others, etc. etc.
             Log("calling StartupHook.Initialize() directly...");
-            StartupHook.Initialize();
+            Core.Core.Initialize();
             Log("StartupHook.Initialize() returned");
 
             // Load MISAML.GodotAPI.dll separately, into the isolated context
@@ -140,8 +141,8 @@ public static class Loader
 
             var baseDir = Path.GetDirectoryName(typeof(Loader).Assembly.Location)!;
             var modsDir = Path.GetFullPath(Path.Combine(baseDir, "..", "mods"));
-            ModLoader.GameContext = isolatedContext;
-            ModLoader.LoadMods(modsDir, Log);
+            modLoader.GameContext = isolatedContext;
+            modLoader.LoadMods(modsDir, Log);
         }
         catch (Exception e)
         {
@@ -149,11 +150,11 @@ public static class Loader
         }
     }
 
-    private static void OnFirstBridgeCall(object instance)
+    private void OnFirstBridgeCall(object instance)
     {
         // game is running, tree exists
         GodotBridgePatch.OnBridgeInstanceSeen -= OnFirstBridgeCall;
-        GodotBridge.RaiseReady();
+        godotBridge.RaiseReady();
     }
 
     private static readonly Stopwatch _stopwatch = Stopwatch.StartNew();

@@ -26,7 +26,7 @@ namespace MISAML.Core;
 public static class Hooks
 {
     // setup Log for Hooks
-    private static void Log(string message) => StartupHook.Log(nameof(Hooks), message);
+    private static void Log(string message) => Core.Log(nameof(Hooks), message);
 
     // Harmony instance used for all MISAML patches.
     internal static readonly Harmony Harmony = new("MISAML");
@@ -497,7 +497,7 @@ public static class Hooks
         catch (Exception e)
         {
             // an assembly that can't be searched must never break an assembly load
-            StartupHook.DebugLog($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
+            Core.DebugLog($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
         }
 
         return found;
@@ -643,7 +643,7 @@ public static class Hooks
             // not logged every time normally, a handler replacing a call it owns
             // while other handlers wait is the normal case (e.g. each mod owns
             // its own syscall).
-            if (StartupHook.DebugEnabled && i < chain.Count - 1)
+            if (Core.DebugEnabled && i < chain.Count - 1)
             {
                 Log($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
             }

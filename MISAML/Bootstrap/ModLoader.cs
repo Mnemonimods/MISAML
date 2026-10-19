@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using MISAML.Bootstrap.Records;
 using MISAML.Core;
 using MISAML.Interfaces;
 

@@ -1,5 +1,0 @@
-<Project>
-    <PropertyGroup>
-        <BaseOutputPath>$(MSBuildThisFileDirectory)bin\</BaseOutputPath>
-    </PropertyGroup>
-</Project>

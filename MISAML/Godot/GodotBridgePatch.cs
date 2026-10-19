@@ -5,7 +5,7 @@ using System.Reflection;
 using HarmonyLib;
 using MISAML.Interfaces;
 
-namespace MISAML.Core;
+namespace MISAML.Godot;
 
 // The single mod-facing patching thing, this is very much WIP and WILL 
 // be changed in the near future. A mod names any type+method it wants
@@ -19,7 +19,7 @@ namespace MISAML.Core;
 //   grep -rl "GlobalClass" decompiled_mnemonimov/
 public class GodotBridgePatch : IGodotBridgePatch
 {
-    private static void Log(string message) => Core.Log(nameof(GodotBridgePatch), message);
+    private static void Log(string message) => Core.Core.Log(nameof(GodotBridgePatch), message);
 
     private static readonly HashSet<string> SkipNames =
     [
@@ -104,7 +104,7 @@ public class GodotBridgePatch : IGodotBridgePatch
     }
     private static void BridgePrefix(MethodBase __originalMethod, object[] __args, object __instance)
     {
-        if (Core.DebugEnabled)
+        if (Core.Core.DebugEnabled)
         {
             try
             {
@@ -132,7 +132,7 @@ public class GodotBridgePatch : IGodotBridgePatch
 
     private static void BridgePostfix(MethodBase __originalMethod, object __result)
     {
-        if (!Core.DebugEnabled) return;
+        if (!Core.Core.DebugEnabled) return;
 
         try
         {

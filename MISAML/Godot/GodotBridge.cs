@@ -4,11 +4,11 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using MISAML.Interfaces;
 
-namespace MISAML.Core;
+namespace MISAML.Godot;
 
 public class GodotBridge : IGodotBridge
 {
-    private static void Log(string message) => Core.Log(nameof(GodotBridge), message);
+    private static void Log(string message) => Core.Core.Log(nameof(GodotBridge), message);
 
     private static Assembly? _isolatedApi;
     private static readonly Dictionary<string, MethodInfo> _cache = new();
@@ -33,7 +33,7 @@ public class GodotBridge : IGodotBridge
                          ?? throw new Exception($"Primitives.{name} not found!");
 
             _cache[name] = method;
-            Core.DebugLog($"resolved {name}");
+            Core.Core.DebugLog($"resolved {name}");
             return method;
         }
     }
@@ -69,7 +69,7 @@ public class GodotBridge : IGodotBridge
     // bridge for GDScript -> C#
     private static readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
     {
-        ["log"] = args => { Core.Log("Script", string.Join(" ", args)); return null; },
+        ["log"] = args => { Core.Core.Log("Script", string.Join(" ", args)); return null; },
     };
 
     private static object? _scriptApi;

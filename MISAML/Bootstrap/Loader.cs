@@ -5,7 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading;
-using MISAML.Core;
+using MISAML.Godot;
 using MISAML.Interfaces;
 
 namespace MISAML.Bootstrap;
@@ -159,5 +159,3 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
 
     private static readonly Stopwatch _stopwatch = Stopwatch.StartNew();
 }
-
-public record ModStatus(string Id, string Name, string Version, bool Enabled, bool Loaded, string? Error, string? Description = null);

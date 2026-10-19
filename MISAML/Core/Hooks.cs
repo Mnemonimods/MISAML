@@ -1,12 +1,10 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using HarmonyLib;
-using MISAML.Debug;
 
 namespace MISAML.Core;
 
@@ -153,7 +151,7 @@ public static class Hooks
     /// <param name="priority">The priority.</param>
     /// <returns>True if registration succeeds, else, false.</returns>
     public static bool Register(
-        Type type,
+        Type? type,
         string methodName,
         Func<object?, object?[], HookResult> handler,
         int priority
@@ -303,11 +301,6 @@ public static class Hooks
         RegexOptions.Compiled
     );
 
-    /// <summary>
-    /// 
-    /// </summary>
-    /// <param name="signature"></param>
-    /// <returns></returns>
     private static string ExpandAliases(string signature)
         => AliasPattern.Replace(signature, m => TypeAliases[m.Value]);
 
@@ -360,11 +353,6 @@ public static class Hooks
     /// <param name="patchKey">The unique key identifying the patch.</param>
     private static void EnsurePatched(string typeName, string methodName, string? signature, string patchKey)
     {
-        lock (PatchLock)
-        {
-            if (PatchedKeys.Contains(patchKey)) return;
-        }
-
         // subscribe before searching, so an assembly that loads in between is
         // seen by the listener instead of being ignored/slipping through
         AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
@@ -374,7 +362,8 @@ public static class Hooks
         {
             if (PatchedKeys.Contains(patchKey))
             {
-                finished = true;
+                AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+                return;
             }
             else
             {
@@ -470,7 +459,7 @@ public static class Hooks
 
             foreach (var method in sameName)
             {
-                if (signature != null && signature != "*" && SignatureOf(method) != signature) continue;
+                if (!(signature != null && signature != "*" && SignatureOf(method) != signature)) continue;
 
                 // a static call has no instance, so there's no way to tell which
                 // child type it came through

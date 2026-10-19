@@ -143,12 +143,9 @@ public static class ModLoader
                 var shared = FindInGame(name);
                 if (shared != null) return shared;
 
-                if (name.Name != null && _dllIndex.TryGetValue(name.Name, out var path))
-                {
-                    log($"resolved dependency '{name.Name}' => {path}");
-                    return ctx.LoadFromAssemblyPath(path);
-                }
-                return null; // not found
+                if (name.Name != null || !_dllIndex.TryGetValue(name.Name!, out var path)) return null; // not found
+                log($"resolved dependency '{name.Name}' => {path}");
+                return ctx.LoadFromAssemblyPath(path);
             };
         }
 

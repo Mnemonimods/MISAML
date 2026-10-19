@@ -140,6 +140,7 @@ public static class Loader
 
             var baseDir = Path.GetDirectoryName(typeof(Loader).Assembly.Location)!;
             var modsDir = Path.GetFullPath(Path.Combine(baseDir, "..", "mods"));
+            ModLoader.GameContext = isolatedContext;
             ModLoader.LoadMods(modsDir, Log);
         }
         catch (Exception e)

@@ -211,7 +211,7 @@ public static class ModLoader
             }
 
             // a mod made for another MISAML ver only gets a warning, still loads
-            if (manifest.MisamlVersion is {} wanted && installedMisaml != null)
+            if (manifest.MisamlVersion is { } wanted && installedMisaml != null)
             {
                 var wantedRange = VersionReq.TryParse(wanted, out var wantedError);
                 if (wantedRange == null)
@@ -221,7 +221,7 @@ public static class ModLoader
             }
 
             // misaml.toml can pin which version of a mod the user wants
-            if (setting?.Version is {} pin)
+            if (setting?.Version is { } pin)
             {
                 var range = VersionReq.TryParse(pin, out var pinError);
                 var installed = VersionReq.ParseVersion(manifest.Version);
@@ -241,7 +241,7 @@ public static class ModLoader
             }
 
             // the user's priority for this mod, used for every hook it registers
-            if (setting?.Priority is {} priority)
+            if (setting?.Priority is { } priority)
             {
                 Hooks.SetModPriority(manifest.Id, priority);
                 log($"{manifest.Id}: priority {priority} from misaml.toml");

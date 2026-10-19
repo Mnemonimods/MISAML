@@ -10,19 +10,20 @@ CLI="target/release/misaml-cli"
 CORE_PUBLISH="MISAML/bin/Release/net8.0/publish"
 BOOTSTRAP_PUBLISH="MISAML/Bootstrap/bin/Release/net8.0/publish"
 GODOTAPI_PUBLISH="MISAML/GodotAPI/bin/Release/net8.0/publish"
+DOTNET_ARGS=()
 
 compile() {
     log "Building Rust..."
     cargo build --release
 
     log "Publishing MISAML.Bootstrap..."
-    (cd MISAML/Bootstrap && dotnet publish -c Release)
+    (cd MISAML/Bootstrap && dotnet publish -c Release "${DOTNET_ARGS[@]}")
 
     log "Publishing MISAML..."
-    (cd MISAML && dotnet publish -c Release)
+    (cd MISAML && dotnet publish -c Release "${DOTNET_ARGS[@]}")
 
     log "Publishing MISAML.GodotAPI..."
-    (cd MISAML/GodotAPI && dotnet publish -c Release)
+    (cd MISAML/GodotAPI && dotnet publish -c Release "${DOTNET_ARGS[@]}")
 
     for f in "$SHIM" "$CLI"; do
         [ -f "$f" ] || { err "Missing: $f"; exit 1; }
@@ -86,6 +87,13 @@ do_build() {
     log "Run with: ./dist/misaml-cli"
 }
 
+do_build_release() {
+    log "Release build, from clean, without the git commit in the version..."
+    do_clean_csharp
+    DOTNET_ARGS=(-p:IncludeSourceRevisionInInformationalVersion=false)
+    do_build
+}
+
 do_rebuild() {
     [ -d "dist" ] || {
         err "dist/ not found. Run './build.sh build' first."
@@ -145,6 +153,7 @@ Usage: ./build.sh <command>
 
 Commands:
   build          Build Rust + MISAML and stage dist/
+  build-release  Build, but from clean, and without git commit in the version for C#
   rebuild        Rebuild and restage binaries
   run            Launch ./dist/misaml-cli
   clean          Remove all code build artifacts (clean-rust + clean-csharp)
@@ -157,6 +166,7 @@ EOF
 
 case "${1:-}" in
     build)          do_build ;;
+    build-release)  do_build_release ;;
     rebuild)        do_rebuild ;;
     run)            do_run ;;
     clean)          do_clean ;;

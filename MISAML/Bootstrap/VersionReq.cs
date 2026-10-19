@@ -35,8 +35,11 @@ public static class VersionReq
     }
 
     // a mod's own version, must look like 1.2.3 (or 1.2.3-beta.1), null if not
-    public static SemVersion? ParseVersion(string txt)
+    public static SemVersion? ParseVersion(string? txt)
     {
+        if (txt is null)
+            return null;
+
         try { return SemVersion.Parse(txt, SemVersionStyles.Strict); }
         catch (Exception) { return null; }
     }

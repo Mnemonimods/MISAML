@@ -8,7 +8,7 @@ namespace MISAML.Bootstrap.Records;
 /// <param name="Priority">mod priority</param>
 /// <param name="Version">mod version</param>
 public record ModSetting(
-    bool Enabled, 
-    int? Priority, 
+    bool Enabled,
+    int? Priority,
     string? Version
     );

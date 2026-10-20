@@ -11,7 +11,7 @@ namespace MISAML.Core;
 // Runs in the .NET Default AssemblyLoadContext (see loader as to why).
 // Purpose: always hook GodotBridgePatch when Mnemonimov loads (bootstrap),
 // and if MISAML_DEBUG=1, run the MISAML.Debug methods.
-public class Core(IGodotBridgePatch godotBridgePatch) :ICore
+public class Core(IGodotBridgePatch godotBridgePatch) : ICore
 {
     // path for log file
     private static readonly string LogPath = Path.Combine(

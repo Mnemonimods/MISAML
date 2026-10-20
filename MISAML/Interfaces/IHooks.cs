@@ -11,14 +11,14 @@ public interface IHooks
     /// <param name="modId">the ID of the mod</param>
     /// <param name="priority">the priority to set it to</param>
     void SetModPriority(string modId, int priority);
-    
+
     /// <summary>
     /// Sets the current mod for the lifetime of the returned scope.
     /// </summary>
     /// <param name="modId">The ID of the mod to set as current.</param>
     /// <returns>A disposable scope that restores the previous mod when disposed.</returns>
     IDisposable EnterMod(string modId);
-    
+
     /// <summary>
     /// Registers a handler for a method using the default priority.
     /// The handler receives the instance and arguments, and can continue the
@@ -38,7 +38,7 @@ public interface IHooks
     /// <param name="methodName">The name of the target method.</param>
     /// <param name="handler">The handler to execute.</param>
     void Register(Type type, string methodName, Func<object?, object?[], HookResult> handler);
-    
+
     /// <summary>
     /// Registers a handler for a method using its type directly and a custom priority.
     /// </summary>
@@ -48,7 +48,7 @@ public interface IHooks
     /// <param name="priority">The priority.</param>
     /// <returns>True if registration succeeds, else, false.</returns>
     bool Register(Type? type, string methodName, Func<object?, object?[], HookResult> handler, int priority);
-    
+
     /// <summary>
     /// Registers a handler for a method using its type parameter and an optional priority.
     /// </summary>

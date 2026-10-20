@@ -19,7 +19,7 @@ namespace MISAML.Bootstrap;
 //
 // A mod DLL's starting point is named in mod.json by "entryMethod", written as
 // Namespace.Class.Method. The method must be public static with no parameters.
-public class ModLoader (IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq) : IModLoader
+public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;

@@ -32,9 +32,8 @@ jobs:
         include:
           - os: ubuntu-latest
             experimental: false
-#            turned off windows for now as that's still BROKEN asf.
-#          - os: windows-latest
-#            experimental: true
+          - os: windows-latest
+            experimental: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4

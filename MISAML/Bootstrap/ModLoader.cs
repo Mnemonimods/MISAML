@@ -145,8 +145,7 @@ public abstract class ModLoader (IGodotBridge godotBridge) : IModLoader
                 var shared = FindInGame(name);
                 if (shared != null) return shared;
 
-                if (name.Name != null || !_dllIndex.TryGetValue(name.Name!, out var path)) return null; // not found
-                log($"resolved dependency '{name.Name}' => {path}");
+                if (name.Name == null || !_dllIndex.TryGetValue(name.Name, out var path)) return null; // not found
                 return ctx.LoadFromAssemblyPath(path);
             };
         }

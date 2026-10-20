@@ -59,6 +59,8 @@ namespace MISAML.Bootstrap;
 
 public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
 {
+    public static Loader? Instance;
+
     private static readonly string LogPath = Path.Combine(
         Path.GetDirectoryName(typeof(Loader).Assembly.Location)!,
         "misaml.log"
@@ -78,33 +80,17 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
     private static int _handoffStarted = 0;
 
     // Called once, directly by the Rust shim via coreclr_create_delegate
-    public void Handoff()
+    public static void Handoff()
     {
         File.WriteAllText(LogPath, ""); // clear log
 
         Log("Starting, waiting for Mnemonimov...");
 
-        // run this function whenever a new assembly is loaded into the AppDomain
-        //
-        // add the function to the AssemblyLoad event so it runs automatically
-        AppDomain.CurrentDomain.AssemblyLoad += (sender, args) =>
-        {
-            // get the name of the assembly that was just loaded
-            string? loadedName = args.LoadedAssembly.GetName().Name;
-
-            // check if the loaded assembly has a name and is one we are waiting for
-            if (loadedName != null && AssemblyNames.Contains(loadedName))
-            {
-                // Interlocked.CompareExchange is an Atomic, ensures only the
-                // first assembly actually triggers the handoff
-                // ref is basically like *, instead of copying the value
-                if (Interlocked.CompareExchange(ref _handoffStarted, 1, 0) == 0)
-                {
-                    Log($"anchor assembly '{loadedName}' loaded, starting handoff...");
-                    Start(args.LoadedAssembly);
-                }
-            }
-        };
+        Instance = new Loader(
+            new GodotBridge(),
+            new ModLoader(godotBridge: new GodotBridge()),
+            new Core.Core(new GodotBridgePatch())
+        );
     }
 
     private void Start(Assembly anchorAssembly)
@@ -121,7 +107,7 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
             // Load MISAML.GodotAPI.dll separately, into the isolated context
             // to interface with the Godot API directly.
             var isolatedContext = AssemblyLoadContext.GetLoadContext(anchorAssembly)
-                ?? throw new Exception("couldn't get load context for " + anchorAssembly);
+                                  ?? throw new Exception("couldn't get load context for " + anchorAssembly);
 
             Log($"got isolated context: {isolatedContext.Name}");
 
@@ -158,4 +144,20 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
     }
 
     private static readonly Stopwatch _stopwatch = Stopwatch.StartNew();
+
+    private void OnAssemblyLoad(object? sender, AssemblyLoadEventArgs args)
+    {
+        string? loadedName = args.LoadedAssembly.GetName().Name;
+        if (loadedName == null || !AssemblyNames.Contains(loadedName))
+            return;
+
+        // only the first anchor assembly triggers the handoff
+        if (Interlocked.CompareExchange(ref _handoffStarted, 1, 0) != 0)
+            return;
+
+        AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+
+        Log($"anchor assembly '{loadedName}' loaded, starting handoff...");
+        Start(args.LoadedAssembly);
+    }
 }

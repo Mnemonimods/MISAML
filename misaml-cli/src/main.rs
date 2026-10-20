@@ -46,7 +46,9 @@ const DLL_HASHES: &[(&str, &[&str])] = &[
 
 const MNEMONIMOV_APP_ID: u32 = 3854110;
 const BUILD_ID: &str = env!("CARGO_PKG_VERSION");
-const RUNTIME_VERSION: &str = "8.0.30";
+
+// strings libcoreclr.so | sed -nE 's/.*Version (8\.0)\.([0-9]+)[0-9]{2}\..*/\1.\2/p'
+const RUNTIME_VERSION: &str = "8.0.31";
 
 #[cfg(target_os = "windows")]
 mod platform {

@@ -65,6 +65,7 @@ public class GodotBridge : IGodotBridge
     // signals (handler gets signals args, empty if none)
     public void Connect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Connect), instance, signalName, handler);
     public object CreateCallable(Func<object?[], object?> function) => Invoke(nameof(CreateCallable), function)!;
+    public void Disconnect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Disconnect), instance, signalName, handler);
 
     // bridge for GDScript -> C#
     private static readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
@@ -99,7 +100,7 @@ public class GodotBridge : IGodotBridge
         return function(args[1..]);
     }
 
-    public void Disconnect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Disconnect), instance, signalName, handler);
+
 
     // static
     public object? CallStatic(string typeName, string methodName, params object?[] args) => Invoke(nameof(CallStatic), typeName, methodName, args);

@@ -18,7 +18,7 @@ namespace MISAML.Bootstrap;
 //
 // A mod DLL's starting point is named in mod.json by "entryMethod", written as
 // Namespace.Class.Method. The method must be public static with no parameters.
-public class ModLoader (IGodotBridge godotBridge) : IModLoader
+public class ModLoader (IGodotBridge godotBridge, IHooks hooks) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;
@@ -252,7 +252,7 @@ public class ModLoader (IGodotBridge godotBridge) : IModLoader
             // the user's priority for this mod, used for every hook it registers
             if (setting?.Priority is { } priority)
             {
-                Hooks.SetModPriority(manifest.Id, priority);
+                hooks.SetModPriority(manifest.Id, priority);
                 log($"{manifest.Id}: priority {priority} from misaml.toml");
             }
 
@@ -266,7 +266,7 @@ public class ModLoader (IGodotBridge godotBridge) : IModLoader
 
                 // everything the mod registers while this block runs is owned
                 // by its modId, so Hooks can name the mod in the log
-                using (Hooks.EnterMod(manifest.Id))
+                using (hooks.EnterMod(manifest.Id))
                 {
                     if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
                     if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);

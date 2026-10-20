@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using HarmonyLib;
+using MISAML.Interfaces;
 
 namespace MISAML.Core;
 
@@ -23,7 +24,7 @@ namespace MISAML.Core;
 /// <summary>
 /// Provides a mod-facing API for lazily patching methods and chaining handlers.
 /// </summary>
-public static class Hooks
+public class Hooks : IHooks
 {
     // setup Log for Hooks
     private static void Log(string message) => Core.Log(nameof(Hooks), message);
@@ -38,7 +39,7 @@ public static class Hooks
     // passes to Register
     private static readonly ConcurrentDictionary<string, int> ModPriorities = new(StringComparer.OrdinalIgnoreCase);
 
-    public static void SetModPriority(string modId, int priority) => ModPriorities[modId] = priority;
+    public void SetModPriority(string modId, int priority) => ModPriorities[modId] = priority;
 
     // tracks the id of the mod which is currently initializing, incl.
     // across threads/async work
@@ -49,7 +50,7 @@ public static class Hooks
     /// </summary>
     /// <param name="modId">The ID of the mod to set as current.</param>
     /// <returns>A disposable scope that restores the previous mod when disposed.</returns>
-    public static IDisposable EnterMod(string modId) => new ModScope(modId);
+    public IDisposable EnterMod(string modId) => new ModScope(modId);
 
     /// <summary>
     /// Temporarily sets the current mod and restores the previous mod when disposed.
@@ -120,7 +121,7 @@ public static class Hooks
     /// containing the method to hook.</param>
     /// <param name="methodName">The name of the target method.</param>
     /// <param name="handler">The handler to execute.</param>
-    public static void Register(
+    public void Register(
         string typeName,
         string methodName,
         Func<object?, object?[], HookResult> handler
@@ -136,7 +137,7 @@ public static class Hooks
     /// <param name="type">The type containing the target method.</param>
     /// <param name="methodName">The name of the target method.</param>
     /// <param name="handler">The handler to execute.</param>
-    public static void Register(
+    public void Register(
         Type type,
         string methodName,
         Func<object?, object?[], HookResult> handler
@@ -150,7 +151,7 @@ public static class Hooks
     /// <param name="handler">The handler to execute.</param>
     /// <param name="priority">The priority.</param>
     /// <returns>True if registration succeeds, else, false.</returns>
-    public static bool Register(
+    public bool Register(
         Type? type,
         string methodName,
         Func<object?, object?[], HookResult> handler,
@@ -175,7 +176,7 @@ public static class Hooks
     /// <param name="handler">The handler to execute.</param>
     /// <param name="priority">The priority.</param>
     /// <returns>True if registration succeeds, else, false.</returns>
-    public static bool Register<T>(
+    public bool Register<T>(
         string methodName,
         Func<object?, object?[], HookResult> handler,
         int priority = DefaultPriority
@@ -194,7 +195,7 @@ public static class Hooks
     /// <param name="handler">The handler to execute.</param>
     /// <param name="priority">The priority.</param>
     /// <returns>True if registration succeeds, else, false.</returns>
-    public static bool Register(
+    public bool Register(
         string typeName,
         string methodName,
         Func<object?, object?[], HookResult> handler,

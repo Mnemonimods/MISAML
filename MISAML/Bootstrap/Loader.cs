@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading;
+using MISAML.Core;
 using MISAML.Godot;
 using MISAML.Interfaces;
 
@@ -88,7 +89,7 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
 
         Instance = new Loader(
             new GodotBridge(),
-            new ModLoader(godotBridge: new GodotBridge()),
+            new ModLoader(new GodotBridge(), new Hooks()),
             new Core.Core(new GodotBridgePatch())
         );
 

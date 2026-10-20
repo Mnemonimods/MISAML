@@ -3,7 +3,7 @@ use std::{
     process::Command,
 };
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 
 use anyhow::{Context, Result, anyhow, bail};

@@ -1,7 +1,3 @@
-// decides which file opens get redirected. the hooks that actually intercept
-// opens live in linux.rs (open64 today, future windows.rs would add
-// CreateFileW here too)
-//
 // the game loads its dependencies from its own folder, and that folder only
 // has trimmed framework dlls. so opens of those dlls get pointed at the
 // untrimmed copies MISAML ships w/

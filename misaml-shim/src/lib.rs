@@ -6,13 +6,13 @@
 // Mods & Harmony are managed in MISAML.Core
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+use std::path::PathBuf;
 use std::sync::{
     OnceLock,
     atomic::{AtomicU8, Ordering},
 };
 
 use crate::ffi::{BootstrapFn, CoreclrCreateDelegateFn, CoreclrInitializeFn};
-use crate::tpa::Assembly;
 
 // reads MISAML_DEBUG once and remembers the answer
 pub(crate) fn debug_enabled() -> bool {
@@ -21,17 +21,19 @@ pub(crate) fn debug_enabled() -> bool {
 }
 
 macro_rules! debug_log {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => {{
         if $crate::debug_enabled() {
-            eprintln!(concat!("[misaml-shim ", env!("CARGO_PKG_VERSION"), "] {}"), format!($($arg)*));
+            let message = format!($($arg)*);
+            eprintln!("[misaml-shim {}] {message}", env!("CARGO_PKG_VERSION"));
         }
-    };
+    }};
 }
-
+ 
 macro_rules! log {
-    ($($arg:tt)*) => {
-        eprintln!(concat!("[misaml-shim ", env!("CARGO_PKG_VERSION"), "] {}"), format!($($arg)*));
-    };
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*);
+        eprintln!("[misaml-shim {}] {message}", env!("CARGO_PKG_VERSION"));
+    }};
 }
 
 mod ffi;
@@ -40,6 +42,9 @@ mod tpa;
 
 #[cfg(target_os = "linux")]
 mod linux;
+
+#[cfg(target_os = "windows")]
+mod windows;
 
 #[repr(u8)]
 enum InitState {
@@ -215,7 +220,7 @@ pub(crate) unsafe extern "C" fn hooked_initialize(
     result
 }
 
-fn read_all_dir(dir: Option<String>) -> Vec<Assembly> {
+fn read_all_dir(dir: Option<String>) -> Vec<PathBuf> {
     let Some(dir) = dir else { return Vec::new() };
     let Ok(entries) = std::fs::read_dir(&dir) else {
         debug_log!("couldn't read directory: {dir}");
@@ -225,7 +230,6 @@ fn read_all_dir(dir: Option<String>) -> Vec<Assembly> {
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dll")))
-        .map(|path| Assembly { path })
         .collect()
 }
 
@@ -265,12 +269,12 @@ fn bootstrap_managed(host_handle: *mut c_void, domain_id: c_uint) -> bool {
         return false;
     }
 
-    debug_log!("calling MISAML.Bootstrap.Entry.Handoff() in MISAML.dll");
+    debug_log!("calling MISAML.Bootstrap.Loader.Handoff() in MISAML.Bootstrap.dll");
 
     let bootstrap: BootstrapFn = unsafe { std::mem::transmute(delegate_ptr) };
     unsafe { bootstrap() };
 
-    debug_log!("StartupHook.Initialize() returned");
+    debug_log!("Handoff() returned");
 
     true
 }

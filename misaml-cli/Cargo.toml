@@ -6,14 +6,26 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 directories = "6.0.0"
-flate2 = "1.1.10"
 md5 = "0.8.1"
 misaml-pck = { version = "0.1.0", path = "../misaml-pck" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 steamlocate = "2.1.1"
-tar = "0.4.46"
 toml = "1.1.8"
 toml_edit = "0.25.17"
 ureq = "3.4.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tar = "0.4.46"
+flate2 = "1.1.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
 zip = "9.0.1"

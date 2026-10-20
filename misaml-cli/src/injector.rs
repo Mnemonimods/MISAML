@@ -135,9 +135,7 @@ unsafe fn load_in_game(
     // the thread's exit code is LoadLibraryW's return value, 0 is fail
     let mut code = 0u32;
     if unsafe { GetExitCodeThread(thread_handle, &mut code) } == 0 || code == 0 {
-        return Err(anyhow!(
-            "the game could not load the shim DLL"
-        ));
+        return Err(anyhow!("the game could not load the shim DLL"));
     }
 
     Ok(())

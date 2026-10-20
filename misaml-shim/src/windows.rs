@@ -12,9 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use minhook::MinHook;
 use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 
-use crate::ffi::{
-    self, CoreclrInitializeFn, CreateFileWFn, DllNotificationData, LoadLibraryExWFn
-};
+use crate::ffi::{self, CoreclrInitializeFn, CreateFileWFn, DllNotificationData, LoadLibraryExWFn};
 use crate::{CORECLR_HANDLE, REAL_INITIALIZE, hooked_initialize, redirect};
 
 // only the first coreclr.dll

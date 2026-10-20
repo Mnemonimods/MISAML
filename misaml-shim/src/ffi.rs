@@ -79,7 +79,7 @@ pub type CreateFileWFn = unsafe extern "system" fn(
 // LoadLibraryExW(name, file, flags) -> HMODULE
 #[cfg(target_os = "windows")]
 pub type LoadLibraryExWFn = unsafe extern "system" fn(*const u16, *mut c_void, u32) -> *mut c_void;
- 
+
 // UNICODE_STRING, length counts bytes not chars
 #[cfg(target_os = "windows")]
 #[repr(C)]
@@ -108,7 +108,7 @@ pub type DllNotificationFn =
 // LDR_DLL_NOTIFICATION_REASON_LOADED
 #[cfg(target_os = "windows")]
 pub const DLL_NOTIFICATION_LOADED: u32 = 1;
- 
+
 #[cfg(target_os = "windows")]
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -118,7 +118,7 @@ fn wide(text: &str) -> Vec<u16> {
 #[cfg(target_os = "windows")]
 pub unsafe fn resolve(handle: *mut c_void, name: &CStr) -> *mut c_void {
     use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
- 
+
     match unsafe { GetProcAddress(handle, name.as_ptr().cast()) } {
         Some(f) => f as usize as *mut c_void,
         None => std::ptr::null_mut(),
@@ -129,7 +129,7 @@ pub unsafe fn resolve(handle: *mut c_void, name: &CStr) -> *mut c_void {
 #[cfg(target_os = "windows")]
 pub fn loaded_module(name: &str) -> *mut c_void {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
- 
+
     unsafe { GetModuleHandleW(wide(name).as_ptr()) }
 }
 
@@ -141,7 +141,7 @@ pub fn system_export(module: &str, name: &CStr) -> *mut c_void {
     if handle.is_null() {
         return std::ptr::null_mut();
     }
- 
+
     unsafe { resolve(handle, name) }
 }
 
@@ -152,7 +152,7 @@ pub unsafe fn wide_str<'a>(text: *const u16) -> &'a [u16] {
     while unsafe { *text.add(len) } != 0 {
         len += 1;
     }
- 
+
     unsafe { std::slice::from_raw_parts(text, len) }
 }
 
@@ -165,30 +165,30 @@ pub fn wide_eq_ignore_ascii_case(text: &[u16], expected: &str) -> bool {
             .zip(expected.bytes())
             .all(|(&unit, byte)| unit < 0x80 && (unit as u8).eq_ignore_ascii_case(&byte))
 }
- 
+
 // full path of the file a module was loaded from, null = the exe itself
 #[cfg(target_os = "windows")]
 pub fn module_path(module: *mut c_void) -> String {
     use windows_sys::Win32::System::LibraryLoader::GetModuleFileNameW;
- 
+
     let mut buf = [0u16; 520];
     let len = unsafe { GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) } as usize;
- 
+
     String::from_utf16_lossy(&buf[..len.min(buf.len())])
 }
- 
+
 // UNICODE_STRING -> String, empty on a null ptr
 #[cfg(target_os = "windows")]
 pub unsafe fn unicode_to_string(text: *const UnicodeString) -> String {
     if text.is_null() {
         return String::new();
     }
- 
+
     let text = unsafe { &*text };
     if text.buffer.is_null() {
         return String::new();
     }
- 
+
     let units = unsafe { std::slice::from_raw_parts(text.buffer, text.length as usize / 2) };
     String::from_utf16_lossy(units)
 }
@@ -206,23 +206,23 @@ pub fn register_dll_notification(callback: DllNotificationFn) -> bool {
         context: *mut c_void,
         cookie: *mut *mut c_void,
     ) -> i32;
- 
+
     let ntdll = loaded_module("ntdll.dll");
     if ntdll.is_null() {
         return false;
     }
- 
+
     let ptr = unsafe { resolve(ntdll, c"LdrRegisterDllNotification") };
     if ptr.is_null() {
         return false;
     }
- 
+
     // safe, this is the documented signature of the export
     let register: RegisterFn = unsafe { std::mem::transmute(ptr) };
- 
+
     let mut cookie: *mut c_void = std::ptr::null_mut();
     let status = unsafe { register(0, callback, std::ptr::null_mut(), &mut cookie) };
- 
+
     // NTSTATUS, success and informational codes are >= 0
     status >= 0
 }

@@ -318,11 +318,11 @@ fn launch(mut cmd: Command, shim_path: &Path, exe_path: &Path) -> Result<()> {
 fn launch(cmd: Command, shim_path: &Path, exe_path: &Path) -> Result<()> {
     let status = injector::launch(cmd, shim_path)
         .with_context(|| format!("failed to launch {}", exe_path.display()))?;
- 
+
     if !status.success() {
         log!("game exited with {status}");
     }
- 
+
     Ok(())
 }
 
@@ -362,11 +362,11 @@ fn resolve_game_dir(config: &Config) -> Result<PathBuf> {
 // toml does not expand "~", so uh, fix
 fn expand_home(path: &Path) -> PathBuf {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
- 
+
     if let (Ok(rest), Some(home)) = (path.strip_prefix("~"), home) {
         return PathBuf::from(home).join(rest);
     }
- 
+
     path.to_path_buf()
 }
 
@@ -592,40 +592,39 @@ fn extract_runtime_archive(reader: impl std::io::Read, dest_dir: &Path) -> Resul
         // zip need random access, so this has to be held for it
         let mut reader = reader;
         let mut data = Vec::new();
- 
+
         reader.read_to_end(&mut data)?;
- 
+
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(data))
             .context("failed to open .NET runtime zip archive")?;
- 
+
         for i in 0..zip.len() {
             let mut file = zip.by_index(i)?;
- 
+
             if !file.is_file() {
                 continue;
             }
- 
+
             let Some(name) = wanted_runtime_file(Path::new(&*file.name()?)) else {
                 continue;
             };
- 
+
             // read the file into mem so it can be checked before saving
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut file, &mut bytes)
                 .with_context(|| format!("could not read {name}"))?;
- 
+
             // native DLLs (coreclr and others) must not end up in the assembly list
             if !is_managed_assembly(&bytes) {
                 continue;
             }
- 
+
             std::fs::write(dest_dir.join(&name), &bytes)
                 .with_context(|| format!("could not write {name}"))?;
- 
+
             kept += 1;
         }
     }
-
 
     #[cfg(target_os = "linux")]
     {
@@ -665,15 +664,14 @@ fn is_managed_assembly(bytes: &[u8]) -> bool {
             .get(off..off + 4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     };
- 
+
     let Some(nt) = rd32(0x3C).map(|v| v as usize) else {
         return false;
     };
     if rd32(nt) != Some(0x0000_4550) {
         return false; // not "PE\0\0"
     }
- 
+
     // 64-bit PE, CLR header is data directory entry 14
     rd32(nt + 0xF8).is_some_and(|rva| rva != 0)
 }
-

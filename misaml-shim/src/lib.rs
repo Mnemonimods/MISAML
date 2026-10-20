@@ -28,7 +28,7 @@ macro_rules! debug_log {
         }
     }};
 }
- 
+
 macro_rules! log {
     ($($arg:tt)*) => {{
         let message = format!($($arg)*);

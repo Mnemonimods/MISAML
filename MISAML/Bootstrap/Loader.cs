@@ -91,6 +91,8 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
             new ModLoader(godotBridge: new GodotBridge()),
             new Core.Core(new GodotBridgePatch())
         );
+
+        AppDomain.CurrentDomain.AssemblyLoad += Instance.OnAssemblyLoad;
     }
 
     private void Start(Assembly anchorAssembly)

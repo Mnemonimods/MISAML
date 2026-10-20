@@ -459,7 +459,7 @@ public static class Hooks
 
             foreach (var method in sameName)
             {
-                if (!(signature != null && signature != "*" && SignatureOf(method) != signature)) continue;
+                if (signature != null && signature != "*" && SignatureOf(method) != signature) continue;
 
                 // a static call has no instance, so there's no way to tell which
                 // child type it came through

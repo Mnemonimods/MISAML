@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Text.RegularExpressions;
+using MISAML.Bootstrap.Interfaces;
 using Semver;
 
 namespace MISAML.Bootstrap;
@@ -9,10 +10,10 @@ namespace MISAML.Bootstrap;
 //
 // The Semver library does the version comparing, this only translates
 // Cargo spelling into Semver lang I suppose
-public static class VersionReq
+public class VersionReq : IVersionReq
 {
     // returns null (and says why in error) when the text is not a valid req
-    public static SemVersionRange? TryParse(string txt, out string? err)
+    public SemVersionRange? TryParse(string txt, out string? err)
     {
         err = null;
 
@@ -35,7 +36,7 @@ public static class VersionReq
     }
 
     // a mod's own version, must look like 1.2.3 (or 1.2.3-beta.1), null if not
-    public static SemVersion? ParseVersion(string? txt)
+    public SemVersion? ParseVersion(string? txt)
     {
         if (txt is null)
             return null;

@@ -89,7 +89,12 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
 
         Instance = new Loader(
             new GodotBridge(),
-            new ModLoader(new GodotBridge(), new Hooks()),
+            new ModLoader(
+                new GodotBridge(), 
+                new Hooks(), 
+                new ModSettings(), 
+                new VersionReq()
+                ),
             new Core.Core(new GodotBridgePatch())
         );
 

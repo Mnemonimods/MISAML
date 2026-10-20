@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
 using MISAML.Interfaces;
@@ -18,7 +19,7 @@ namespace MISAML.Bootstrap;
 //
 // A mod DLL's starting point is named in mod.json by "entryMethod", written as
 // Namespace.Class.Method. The method must be public static with no parameters.
-public class ModLoader (IGodotBridge godotBridge, IHooks hooks) : IModLoader
+public class ModLoader (IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;
@@ -158,7 +159,7 @@ public class ModLoader (IGodotBridge godotBridge, IHooks hooks) : IModLoader
         BuildDllIdx(log);
 
         // misaml.toml sits next to the mods folder
-        var settings = ModSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")), log);
+        var settings = modSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")), log);
         if (settings == null)
         {
             log("not loading any mods, because misaml.toml could not be read (fix it, or delete it to get a new one)");
@@ -169,7 +170,7 @@ public class ModLoader (IGodotBridge godotBridge, IHooks hooks) : IModLoader
         var misamlVer = typeof(Hooks).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 
-        var installedMisaml = VersionReq.ParseVersion(misamlVer);
+        var installedMisaml = versionReq.ParseVersion(misamlVer);
         if (installedMisaml == null)
         {
             log($"could not read MISAML's own version ('{misamlVer}')");
@@ -222,7 +223,7 @@ public class ModLoader (IGodotBridge godotBridge, IHooks hooks) : IModLoader
             // a mod made for another MISAML ver only gets a warning, still loads
             if (manifest.MisamlVersion is { } wanted && installedMisaml != null)
             {
-                var wantedRange = VersionReq.TryParse(wanted, out var wantedError);
+                var wantedRange = versionReq.TryParse(wanted, out var wantedError);
                 if (wantedRange == null)
                     log($"{manifest.Id}: misamlVersion {wantedError}, can't check it");
                 else if (!wantedRange.Contains(installedMisaml))
@@ -232,8 +233,8 @@ public class ModLoader (IGodotBridge godotBridge, IHooks hooks) : IModLoader
             // misaml.toml can pin which version of a mod the user wants
             if (setting?.Version is { } pin)
             {
-                var range = VersionReq.TryParse(pin, out var pinError);
-                var installed = VersionReq.ParseVersion(manifest.Version);
+                var range = versionReq.TryParse(pin, out var pinError);
+                var installed = versionReq.ParseVersion(manifest.Version);
 
                 string? problem =
                     range == null ? $"the version in misaml.toml {pinError}" :

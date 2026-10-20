@@ -53,7 +53,7 @@ mod platform {
     pub const RUNTIME_PACKAGE: &str = "win-x64.zip";
     pub const GAME_EXE: &str = "mnemonimov.exe";
     pub const GAME_EXE_HASHES: &[&str] =
-        &["63fcd750c72581592ef20c8b4ea031cc" /* 2026-10-12 */];
+        &["63fcd750c72581592ef20c8b4ea031cc" /* 2026-10-20 */];
     pub const SHIM_NAME: &str = "misaml_shim.dll";
     pub const DATA_DIR: &str = "data_Mnemonimov_windows_x86_64";
 }

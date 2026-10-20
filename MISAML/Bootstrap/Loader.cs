@@ -58,7 +58,7 @@ namespace MISAML.Bootstrap;
 //
 // The bootstrap only does what is described above.
 
-public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
+public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startupHook)
 {
     public static Loader? Instance;
 
@@ -109,7 +109,7 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core)
             // switching. Harmony patches VirtualMachine.HandleSystemCall,
             // the 58 bridge methods, all others, etc. etc.
             Log("calling StartupHook.Initialize() directly...");
-            core.Initialize();
+            startupHook.Initialize();
             Log("StartupHook.Initialize() returned");
 
             // Load MISAML.GodotAPI.dll separately, into the isolated context

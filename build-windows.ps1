@@ -3,13 +3,7 @@
     Builds MISAML on Windows and assembles a runnable dist folder.
 
 .DESCRIPTION
-    Runs every Windows step from the README:
-      1. Checks Rust, the .NET 8 SDK and the MSVC build tools
-      2. cargo build --release
-      3. dotnet publish -c Release
-      4. Merges the C# dependencies with ILRepack into build/csharp
-      5. Assembles the dist folder
-
+    Runs every Windows step required to build.
     Place this script in the repository root.
     Existing files in the dist folder (misaml.toml, MISAML/runtime) are kept.
 
@@ -24,18 +18,19 @@ param(
     [switch]$Run
 )
 
+# Stop script when PS errors occur
 $ErrorActionPreference = "Stop"
+
+# Change working dir to the folder where this script is located
 Set-Location $PSScriptRoot
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
+# literally just a cyan step msg for logging
 function Write-Step([string]$Message) {
     Write-Host ""
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+# run an external program with the specified args and stop on fail
 function Invoke-Native([string]$File, [string[]]$Arguments) {
     & $File @Arguments
     if ($LASTEXITCODE -ne 0) {
@@ -43,22 +38,21 @@ function Invoke-Native([string]$File, [string[]]$Arguments) {
     }
 }
 
+# check whether a req cmd is available, display an install hint if missing
 function Assert-Command([string]$Name, [string]$InstallHint) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "'$Name' not found on PATH. $InstallHint"
     }
 }
 
+# check whether a req file exists at the specified path
 function Assert-FileExists([string]$Path) {
     if (-not (Test-Path $Path -PathType Leaf)) {
         throw "Expected file not found: $Path"
     }
 }
 
-# ---------------------------------------------------------------------------
-# 1. Dependency checks
-# ---------------------------------------------------------------------------
-
+# Test if Rust is installed
 function Test-Rust {
     Assert-Command "rustc" "Install Rust from https://rustup.rs (default MSVC option)."
     Assert-Command "cargo" "Install Rust from https://rustup.rs (default MSVC option)."
@@ -76,6 +70,7 @@ function Test-Rust {
     Write-Host "Rust OK: $versionText"
 }
 
+# Test if dotnet is installed
 function Test-DotNet {
     Assert-Command "dotnet" "Install the .NET 8 SDK from https://dotnet.microsoft.com/en-us/download/dotnet/8.0"
 
@@ -88,6 +83,7 @@ function Test-DotNet {
     Write-Host ".NET OK: $($hasNet8 | Select-Object -First 1)"
 }
 
+# Test if MSVC build tools are installed
 function Test-MsvcBuildTools {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) {
@@ -106,6 +102,7 @@ function Test-MsvcBuildTools {
     Write-Host "MSVC OK: $installPath"
 }
 
+# If $SkipChecks is not true, check deps
 if (-not $SkipChecks) {
     Write-Step "Checking dependencies"
     Test-Rust
@@ -113,35 +110,37 @@ if (-not $SkipChecks) {
     Test-MsvcBuildTools
 }
 
-# ---------------------------------------------------------------------------
-# 2. Rust build
-# ---------------------------------------------------------------------------
-
+# Log building rust
 Write-Step "Building Rust (cargo build --release)"
+
+# Actually build rust w/ Cargo, release
 Invoke-Native "cargo" @("build", "--release")
 
+# Ensure files exist
 $rustOut = "target/release"
 Assert-FileExists "$rustOut/misaml-cli.exe"
 Assert-FileExists "$rustOut/misaml_shim.dll"
 
-# ---------------------------------------------------------------------------
-# 3. C# build
-# ---------------------------------------------------------------------------
-
+# Log building C#
 Write-Step "Building C# (dotnet publish -c Release)"
+
+# Actually build C#
 Invoke-Native "dotnet" @("publish", "-c", "Release")
 
 # ---------------------------------------------------------------------------
 # 4. ILRepack merge
 # ---------------------------------------------------------------------------
 
+# log to check locating ilrepack
 Write-Step "Locating ILRepack"
 
+# nuget dir for checking
 $nugetRoot = $env:NUGET_PACKAGES
 if (-not $nugetRoot) {
     $nugetRoot = Join-Path $env:USERPROFILE ".nuget\packages"
 }
 
+# check if ILRepack.exe exists
 $ilRepack = Get-ChildItem (Join-Path $nugetRoot "ilrepack") -Recurse -Filter "ILRepack.exe" -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
@@ -152,10 +151,14 @@ if (-not $ilRepack) {
 
 Write-Host "Using $($ilRepack.FullName)"
 
+# Set csharp build dir
 $csharpOut = "build/csharp"
 New-Item -ItemType Directory -Force -Path $csharpOut | Out-Null
 
+# Log merging
 Write-Step "Merging MISAML.Bootstrap.dll"
+
+# Merge ILRepack
 $bootstrapPublish = "MISAML/Bootstrap/bin/Release/net8.0/publish"
 Invoke-Native "dotnet" @(
     $ilRepack.FullName,
@@ -168,6 +171,7 @@ Invoke-Native "dotnet" @(
     "$bootstrapPublish/Microsoft.Extensions.Primitives.dll"
 )
 
+# Merging MISAML.dll with ILRepack
 Write-Step "Merging MISAML.dll"
 $mainPublish = "MISAML/bin/Release/net8.0/publish"
 Invoke-Native "dotnet" @(
@@ -179,20 +183,19 @@ Invoke-Native "dotnet" @(
     "$mainPublish/0Harmony.dll"
 )
 
+# Copy MISAML.GodotAPI.dll to dist
 Write-Step "Copying MISAML.GodotAPI.dll"
 $godotApiDll = "MISAML/GodotAPI/bin/Release/net8.0/publish/MISAML.GodotAPI.dll"
 Assert-FileExists $godotApiDll
 Copy-Item $godotApiDll $csharpOut -Force
 
-# ---------------------------------------------------------------------------
-# 5. Assemble dist
-# ---------------------------------------------------------------------------
-
 Write-Step "Assembling $Dist"
 
+# Dist directory
 $distMisaml = Join-Path $Dist "MISAML"
 New-Item -ItemType Directory -Force -Path $distMisaml | Out-Null
 
+# Copy all files into dist
 Copy-Item "$rustOut/misaml-cli.exe" $Dist -Force
 Copy-Item "$rustOut/misaml_shim.dll" $distMisaml -Force
 Copy-Item "$csharpOut/MISAML.dll" $distMisaml -Force
@@ -202,10 +205,7 @@ Copy-Item "$csharpOut/MISAML.GodotAPI.dll" $distMisaml -Force
 Write-Host ""
 Write-Host "Done. Output in: $(Resolve-Path $Dist)" -ForegroundColor Green
 
-# ---------------------------------------------------------------------------
-# Optional: run
-# ---------------------------------------------------------------------------
-
+# Optional run argument to start the game
 if ($Run) {
     Write-Step "Starting misaml-cli"
     Push-Location $Dist

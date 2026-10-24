@@ -14,11 +14,11 @@ namespace MISAML.Core;
 // and if MISAML_DEBUG=1, run the MISAML.Debug methods.
 public class Core(IGodotBridgePatch godotBridgePatch, ILogger<Core> logger) : ICore
 {
-
+    
     // just check env for debug logging
-    internal static readonly bool DebugEnabled
+    public static readonly bool DebugEnabled
         = Environment.GetEnvironmentVariable("MISAML_DEBUG") != null;
-
+    
     public void Initialize()
     {
         logger.LogInformation("MISAML.Core starting...");

@@ -31,7 +31,15 @@ public class DependencyInjector : IDisposable
 
         services.AddLogging(logging =>
         {
-            logging.SetMinimumLevel(LogLevel.Information);
+            if (Core.Core.DebugEnabled)
+            {
+                logging.SetMinimumLevel(LogLevel.Debug);
+                logging.AddFilter("MISAML", LogLevel.Debug);
+            }
+            else
+            {
+                logging.SetMinimumLevel(LogLevel.Information);
+            }
             logging.AddSerilog(serilogLogger, dispose: true);
         });
 

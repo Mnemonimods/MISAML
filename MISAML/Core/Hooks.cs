@@ -645,7 +645,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
             // its own syscall).
             if (Core.DebugEnabled && i < chain.Count - 1)
             {
-                logger.LogWarning($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
+                logger.LogDebug($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
             }
 
             return result;

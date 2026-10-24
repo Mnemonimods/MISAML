@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using Microsoft.Extensions.Logging;
 using MISAML.Interfaces;
 
 namespace MISAML.Godot;
 
-public class GodotBridge : IGodotBridge
+public class GodotBridge(ILogger<GodotBridge> logger) : IGodotBridge
 {
-    private static void Log(string message) => Core.Core.Log(nameof(GodotBridge), message);
 
     private static Assembly? _isolatedApi;
     private static readonly Dictionary<string, MethodInfo> _cache = new();
@@ -19,7 +19,7 @@ public class GodotBridge : IGodotBridge
     public static void Bind(Assembly isolatedApi) => _isolatedApi = isolatedApi;
 
     // first use of a primitive looks it up by name and caches MethodInfo
-    private static MethodInfo Resolve(string name)
+    private MethodInfo Resolve(string name)
     {
         lock (_lock)
         {
@@ -33,7 +33,7 @@ public class GodotBridge : IGodotBridge
                          ?? throw new Exception($"Primitives.{name} not found!");
 
             _cache[name] = method;
-            Core.Core.DebugLog($"resolved {name}");
+            logger.LogDebug($"resolved {name}");
             return method;
         }
     }
@@ -68,9 +68,9 @@ public class GodotBridge : IGodotBridge
     public void Disconnect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Disconnect), instance, signalName, handler);
 
     // bridge for GDScript -> C#
-    private static readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
+    private readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
     {
-        ["log"] = args => { Core.Core.Log("Script", string.Join(" ", args)); return null; },
+        ["log"] = args => { logger.LogInformation("Script", string.Join(" ", args)); return null; },
     };
 
     private static object? _scriptApi;
@@ -145,7 +145,7 @@ public class GodotBridge : IGodotBridge
         RunOnMainThread(() =>
         {
             foreach (var a in run)
-                try { a(); } catch (Exception e) { Log($"ready handler threw: {e}"); }
+                try { a(); } catch (Exception e) { logger.LogWarning($"ready handler threw: {e.Message}"); }
         });
     }
 

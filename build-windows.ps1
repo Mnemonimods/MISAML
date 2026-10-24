@@ -121,6 +121,11 @@ $rustOut = "target/release"
 Assert-FileExists "$rustOut/misaml-cli.exe"
 Assert-FileExists "$rustOut/misaml_shim.dll"
 
+# removing stale output
+Write-Step "Cleaning old C# output"
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
+    "MISAML/Bootstrap/bin", "MISAML/Bootstrap/obj", "build/csharp"
+
 # Log building C#
 Write-Step "Building C# (dotnet publish -c Release)"
 
@@ -158,23 +163,28 @@ New-Item -ItemType Directory -Force -Path $csharpOut | Out-Null
 # Log merging
 Write-Step "Merging MISAML.Bootstrap.dll"
 
+$bootstrapPublish = "MISAML/Bootstrap/bin/Release/net8.0/publish"
+
+$bootstrapDeps = Get-ChildItem $bootstrapPublish -Filter "*.dll" |
+        Where-Object { $_.Name -like "Microsoft.Extensions.*" -or $_.Name -like "Serilog*" } |
+        ForEach-Object { $_.FullName }
+
 # Merge ILRepack
 $bootstrapPublish = "MISAML/Bootstrap/bin/Release/net8.0/publish"
-Invoke-Native "dotnet" @(
+Invoke-Native "dotnet" (@(
     $ilRepack.FullName,
     "/target:library",
     "/lib:$bootstrapPublish",
     "/out:$csharpOut/MISAML.Bootstrap.dll",
     "$bootstrapPublish/MISAML.Bootstrap.dll",
     "$bootstrapPublish/Tomlyn.dll",
-    "$bootstrapPublish/Semver.dll",
-    "$bootstrapPublish/Microsoft.Extensions.Primitives.dll"
-)
+    "$bootstrapPublish/Semver.dll"
+) + $bootstrapDeps)
 
 # Merging MISAML.dll with ILRepack
 Write-Step "Merging MISAML.dll"
 $mainPublish = "MISAML/bin/Release/net8.0/publish"
-Invoke-Native "dotnet" @(
+Invoke-Native "dotnet" (
     $ilRepack.FullName,
     "/target:library",
     "/lib:MISAML/vendor",

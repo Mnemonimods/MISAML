@@ -15,6 +15,19 @@ GODOTAPI_PUBLISH="MISAML/GodotAPI/bin/Release/net8.0/publish"
 CSHARP_OUT="build/csharp"
 CSHARP_DLLS=(MISAML.dll MISAML.Bootstrap.dll MISAML.GodotAPI.dll)
 
+SHARED_DLLS=(
+    Microsoft.Extensions.DependencyInjection.dll
+    Microsoft.Extensions.DependencyInjection.Abstractions.dll
+    Microsoft.Extensions.Logging.dll
+    Microsoft.Extensions.Logging.Abstractions.dll
+    Microsoft.Extensions.Options.dll
+    Microsoft.Extensions.Primitives.dll
+    Serilog.dll
+    Serilog.Extensions.Logging.dll
+    Serilog.Sinks.Console.dll
+    Serilog.Sinks.File.dll
+)
+
 DOTNET_ARGS=()
 
 need_files() {
@@ -51,15 +64,14 @@ compile_csharp() {
     mkdir -p "$CSHARP_OUT"
     cp "$GODOTAPI_PUBLISH/MISAML.GodotAPI.dll" "$CSHARP_OUT/"
 
-    log "Merging Tomlyn.dll, Semver.dll and Microsoft.Extensions.Primitives into MISAML.Bootstrap.dll..."
+    log "Merging Tomlyn and Semver into MISAML.Bootstrap.dll..."
     dotnet "$ilrepack" \
         /target:library \
         /lib:"$BOOTSTRAP_PUBLISH" \
         /out:"$CSHARP_OUT/MISAML.Bootstrap.dll" \
         "$BOOTSTRAP_PUBLISH/MISAML.Bootstrap.dll" \
         "$BOOTSTRAP_PUBLISH/Tomlyn.dll" \
-        "$BOOTSTRAP_PUBLISH/Semver.dll" \
-        "$BOOTSTRAP_PUBLISH/Microsoft.Extensions.Primitives.dll"
+        "$BOOTSTRAP_PUBLISH/Semver.dll"
 
     log "Merging 0Harmony.dll into MISAML.dll..."
     dotnet "$ilrepack" \
@@ -87,6 +99,10 @@ stage() {
     cp "$LINUX_SHIM" dist/MISAML/
     for dll in "${CSHARP_DLLS[@]}"; do
         cp "$CSHARP_OUT/$dll" dist/MISAML/
+    done
+    for dll in "${SHARED_DLLS[@]}"; do
+        need_files "$BOOTSTRAP_PUBLISH/$dll"
+        cp "$BOOTSTRAP_PUBLISH/$dll" dist/MISAML/
     done
 }
 

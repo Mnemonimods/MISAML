@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection.Metadata;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 
@@ -57,7 +56,9 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
                 if (unavailable.TryGetValue(dep.Id, out var why))
                     return $"needs {dep.Id}, which is {why}";
 
-                return $"needs {dep.Id}, which isn't installed";
+                return dep.Source == null
+                    ? $"needs {dep.Id} {dep.RawRange}, which isn't installed (install manually)"
+                    : $"needs {dep.Id} {dep.RawRange}, which isn't installed. Get it from {dep.Source}";
             }
 
             // dependency is alive but version is out of range

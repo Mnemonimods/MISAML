@@ -4,6 +4,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Core;
+using MISAML.Debug;
+using MISAML.Debug.Interfaces;
 using MISAML.Godot;
 using MISAML.Interfaces;
 using Serilog;
@@ -51,6 +53,15 @@ public class DependencyInjector : IDisposable
         services.AddTransient<IModSettings, ModSettings>();
         services.AddTransient<IVersionReq, VersionReq>();
         services.AddSingleton<Loader>();
+        
+        if(Core.Core.DebugEnabled)
+        {
+            services.AddSingleton<IBridge, Bridge>();
+            services.AddSingleton<IGodotSharp, GodotSharp>();
+            services.AddSingleton<IMnemonimov, Mnemonimov>();
+            services.AddSingleton<IDebug, Debug.Debug>();
+            services.AddSingleton<IAsm, Asm>();
+        }
 
         Services = services.BuildServiceProvider();
     }

@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
 using MISAML.Debug;
+using MISAML.Debug.Interfaces;
 using MISAML.Interfaces;
 
 namespace MISAML.Core;
@@ -12,7 +13,14 @@ namespace MISAML.Core;
 // Runs in the .NET Default AssemblyLoadContext (see loader as to why).
 // Purpose: always hook GodotBridgePatch when Mnemonimov loads (bootstrap),
 // and if MISAML_DEBUG=1, run the MISAML.Debug methods.
-public class Core(IGodotBridgePatch godotBridgePatch, ILogger<Core> logger) : ICore
+public class Core(
+    IGodotBridgePatch godotBridgePatch, 
+    ILogger<Core> logger, 
+    IAsm asm, 
+    IBridge bridge, 
+    IMnemonimov mnemonimov, 
+    IGodotSharp godotSharp
+    ) : ICore
 {
     
     // just check env for debug logging
@@ -46,14 +54,14 @@ public class Core(IGodotBridgePatch godotBridgePatch, ILogger<Core> logger) : IC
             switch (loadedName)
             {
                 case "Asm":
-                    RunSearch("Asm", Asm.Run(Hooks.Harmony, assembly));
+                    RunSearch("Asm", asm.Run(Hooks.Harmony, assembly));
                     break;
                 case "Mnemonimov":
-                    RunSearch("Bridge", Bridge.Run(Hooks.Harmony, assembly));
-                    RunSearch("Mnemonimov", Mnemonimov.Run(Hooks.Harmony, assembly));
+                    RunSearch("Bridge", bridge.Run(Hooks.Harmony, assembly));
+                    RunSearch("Mnemonimov", mnemonimov.Run(Hooks.Harmony, assembly));
                     break;
                 case "GodotSharp":
-                    RunSearch("GodotSharp", GodotSharp.Run(Hooks.Harmony, assembly));
+                    RunSearch("GodotSharp", godotSharp.Run(Hooks.Harmony, assembly));
                     break;
             }
         }

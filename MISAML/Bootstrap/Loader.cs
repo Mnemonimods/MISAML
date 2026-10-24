@@ -6,6 +6,8 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading;
 using MISAML.Core;
+using MISAML.Godot;
+using MISAML.Interfaces;
 
 namespace MISAML.Bootstrap;
 
@@ -56,8 +58,10 @@ namespace MISAML.Bootstrap;
 //
 // The bootstrap only does what is described above.
 
-public static class Loader
+public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startupHook)
 {
+    public static Loader? Instance;
+
     private static readonly string LogPath = Path.Combine(
         Path.GetDirectoryName(typeof(Loader).Assembly.Location)!,
         "misaml.log"
@@ -83,30 +87,21 @@ public static class Loader
 
         Log("Starting, waiting for Mnemonimov...");
 
-        // run this function whenever a new assembly is loaded into the AppDomain
-        //
-        // add the function to the AssemblyLoad event so it runs automatically
-        AppDomain.CurrentDomain.AssemblyLoad += (sender, args) =>
-        {
-            // get the name of the assembly that was just loaded
-            string? loadedName = args.LoadedAssembly.GetName().Name;
+        Instance = new Loader(
+            new GodotBridge(),
+            new ModLoader(
+                new GodotBridge(),
+                new Hooks(),
+                new ModSettings(),
+                new VersionReq()
+                ),
+            new Core.Core(new GodotBridgePatch())
+        );
 
-            // check if the loaded assembly has a name and is one we are waiting for
-            if (loadedName != null && AssemblyNames.Contains(loadedName))
-            {
-                // Interlocked.CompareExchange is an Atomic, ensures only the
-                // first assembly actually triggers the handoff
-                // ref is basically like *, instead of copying the value
-                if (Interlocked.CompareExchange(ref _handoffStarted, 1, 0) == 0)
-                {
-                    Log($"anchor assembly '{loadedName}' loaded, starting handoff...");
-                    Start(args.LoadedAssembly);
-                }
-            }
-        };
+        AppDomain.CurrentDomain.AssemblyLoad += Instance.OnAssemblyLoad;
     }
 
-    private static void Start(Assembly anchorAssembly)
+    private void Start(Assembly anchorAssembly)
     {
         try
         {
@@ -114,13 +109,13 @@ public static class Loader
             // switching. Harmony patches VirtualMachine.HandleSystemCall,
             // the 58 bridge methods, all others, etc. etc.
             Log("calling StartupHook.Initialize() directly...");
-            StartupHook.Initialize();
+            startupHook.Initialize();
             Log("StartupHook.Initialize() returned");
 
             // Load MISAML.GodotAPI.dll separately, into the isolated context
             // to interface with the Godot API directly.
             var isolatedContext = AssemblyLoadContext.GetLoadContext(anchorAssembly)
-                ?? throw new Exception("couldn't get load context for " + anchorAssembly);
+                                  ?? throw new Exception("couldn't get load context for " + anchorAssembly);
 
             Log($"got isolated context: {isolatedContext.Name}");
 
@@ -140,8 +135,8 @@ public static class Loader
 
             var baseDir = Path.GetDirectoryName(typeof(Loader).Assembly.Location)!;
             var modsDir = Path.GetFullPath(Path.Combine(baseDir, "..", "mods"));
-            ModLoader.GameContext = isolatedContext;
-            ModLoader.LoadMods(modsDir, Log);
+            modLoader.GameContext = isolatedContext;
+            modLoader.LoadMods(modsDir, Log);
         }
         catch (Exception e)
         {
@@ -149,14 +144,28 @@ public static class Loader
         }
     }
 
-    private static void OnFirstBridgeCall(object instance)
+    private void OnFirstBridgeCall(object instance)
     {
         // game is running, tree exists
         GodotBridgePatch.OnBridgeInstanceSeen -= OnFirstBridgeCall;
-        GodotBridge.RaiseReady();
+        godotBridge.RaiseReady();
     }
 
     private static readonly Stopwatch _stopwatch = Stopwatch.StartNew();
-}
 
-public record ModStatus(string Id, string Name, string Version, bool Enabled, bool Loaded, string? Error, string? Description = null);
+    private void OnAssemblyLoad(object? sender, AssemblyLoadEventArgs args)
+    {
+        string? loadedName = args.LoadedAssembly.GetName().Name;
+        if (loadedName == null || !AssemblyNames.Contains(loadedName))
+            return;
+
+        // only the first anchor assembly triggers the handoff
+        if (Interlocked.CompareExchange(ref _handoffStarted, 1, 0) != 0)
+            return;
+
+        AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+
+        Log($"anchor assembly '{loadedName}' loaded, starting handoff...");
+        Start(args.LoadedAssembly);
+    }
+}

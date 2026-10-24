@@ -1,18 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using MISAML.Bootstrap.Interfaces;
+using MISAML.Bootstrap.Records;
+using MISAML.Interfaces;
 using Tomlyn;
 using Tomlyn.Model;
 
 namespace MISAML.Bootstrap;
 
-// what misaml.toml informs about a single mod, priority is null when the user
-// has not set one, the mod's own (or the default) priority is used then.
-public record ModSetting(bool Enabled, int? Priority, string? Version);
 
 // reads the [mods] table of misaml.toml, each entry is bool, or table like:
 // { enabled = true, priority = 50, version = "0.0.0" }
-public static class ModSettings
+public class ModSettings : IModSettings
 {
     private const int MaxPriority = 65535;
 
@@ -20,7 +20,7 @@ public static class ModSettings
     // or no [mods] table has no issues, just means no settings, returns null
     // only when the file exists but cannot be read, so the caller can refuse
     // to guess which mods the user turned off
-    public static Dictionary<string, ModSetting>? Load(string path, Action<string> log)
+    public Dictionary<string, ModSetting>? Load(string path, Action<string> log)
     {
         var result = new Dictionary<string, ModSetting>(StringComparer.OrdinalIgnoreCase);
 

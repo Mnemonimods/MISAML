@@ -5,7 +5,10 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using MISAML.Bootstrap.Interfaces;
+using MISAML.Bootstrap.Records;
 using MISAML.Core;
+using MISAML.Interfaces;
 
 namespace MISAML.Bootstrap;
 
@@ -16,7 +19,7 @@ namespace MISAML.Bootstrap;
 //
 // A mod DLL's starting point is named in mod.json by "entryMethod", written as
 // Namespace.Class.Method. The method must be public static with no parameters.
-public static class ModLoader
+public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;
@@ -34,10 +37,10 @@ public static class ModLoader
 
     // the game's own assembly load context, a mod that references the game's
     // DLLs must get the game's copy, a second copy is a different set of types
-    internal static AssemblyLoadContext? GameContext { get; set; }
+    public AssemblyLoadContext? GameContext { get; set; }
 
     // the game's already loaded copy of an assembly, or null if it has none
-    private static Assembly? FindInGame(AssemblyName name)
+    private Assembly? FindInGame(AssemblyName name)
         => GameContext?.Assemblies.FirstOrDefault(a => a.GetName().Name == name.Name);
 
     /*
@@ -96,7 +99,7 @@ public static class ModLoader
     // match field names ignoring case, so modId and modid both work
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    private static ModManifest ParseManifest(string json)
+    private ModManifest ParseManifest(string json)
     {
         var raw = JsonSerializer.Deserialize<RawManifest>(json, JsonOptions)
             ?? throw new Exception("mod.json is empty");
@@ -124,7 +127,7 @@ public static class ModLoader
         );
     }
 
-    public static void LoadMods(string modsDir, Action<string> log)
+    public void LoadMods(string modsDir, Action<string> log)
     {
         if (!Directory.Exists(modsDir))
         {
@@ -153,10 +156,10 @@ public static class ModLoader
         // sorts after it
         _modDirs.Clear();
         _modDirs.AddRange(Directory.GetDirectories(modsDir).OrderBy(dir => dir, StringComparer.Ordinal));
-        BuilDllIdx(log);
+        BuildDllIdx(log);
 
         // misaml.toml sits next to the mods folder
-        var settings = ModSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")), log);
+        var settings = modSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")), log);
         if (settings == null)
         {
             log("not loading any mods, because misaml.toml could not be read (fix it, or delete it to get a new one)");
@@ -167,7 +170,7 @@ public static class ModLoader
         var misamlVer = typeof(Hooks).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 
-        var installedMisaml = VersionReq.ParseVersion(misamlVer);
+        var installedMisaml = versionReq.ParseVersion(misamlVer);
         if (installedMisaml == null)
         {
             log($"could not read MISAML's own version ('{misamlVer}')");
@@ -220,7 +223,7 @@ public static class ModLoader
             // a mod made for another MISAML ver only gets a warning, still loads
             if (manifest.MisamlVersion is { } wanted && installedMisaml != null)
             {
-                var wantedRange = VersionReq.TryParse(wanted, out var wantedError);
+                var wantedRange = versionReq.TryParse(wanted, out var wantedError);
                 if (wantedRange == null)
                     log($"{manifest.Id}: misamlVersion {wantedError}, can't check it");
                 else if (!wantedRange.Contains(installedMisaml))
@@ -230,8 +233,8 @@ public static class ModLoader
             // misaml.toml can pin which version of a mod the user wants
             if (setting?.Version is { } pin)
             {
-                var range = VersionReq.TryParse(pin, out var pinError);
-                var installed = VersionReq.ParseVersion(manifest.Version);
+                var range = versionReq.TryParse(pin, out var pinError);
+                var installed = versionReq.ParseVersion(manifest.Version);
 
                 string? problem =
                     range == null ? $"the version in misaml.toml {pinError}" :
@@ -250,7 +253,7 @@ public static class ModLoader
             // the user's priority for this mod, used for every hook it registers
             if (setting?.Priority is { } priority)
             {
-                Hooks.SetModPriority(manifest.Id, priority);
+                hooks.SetModPriority(manifest.Id, priority);
                 log($"{manifest.Id}: priority {priority} from misaml.toml");
             }
 
@@ -264,7 +267,7 @@ public static class ModLoader
 
                 // everything the mod registers while this block runs is owned
                 // by its modId, so Hooks can name the mod in the log
-                using (Hooks.EnterMod(manifest.Id))
+                using (hooks.EnterMod(manifest.Id))
                 {
                     if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
                     if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);
@@ -289,7 +292,7 @@ public static class ModLoader
     /// </summary>
     /// <param name="log">Receives warnings for duplicate assemblies and
     /// directories that could not be read.</param>
-    private static void BuilDllIdx(Action<string> log)
+    private void BuildDllIdx(Action<string> log)
     {
         foreach (var modDir in _modDirs)
         {
@@ -328,7 +331,7 @@ public static class ModLoader
     /// <param name="path">The full path of the DLL being checked.</param>
     /// <returns><see langword="true"/> if the DLL is inside an <c>obj</c>
     /// directory, otherwise, <see langword="false"/>.</returns>
-    private static bool IsBuildOutput(string modDir, string path)
+    protected virtual bool IsBuildOutput(string modDir, string path)
         => Path.GetRelativePath(modDir, path)
             .Split(Path.DirectorySeparatorChar)
             .SkipLast(1)
@@ -346,7 +349,7 @@ public static class ModLoader
     /// <exception cref="Exception">The entry method is missing or invalid,
     /// the specified class cannot be found, or the method doesn't exist with
     /// the required specifications/signature.</exception>
-    private static void LoadDll(string modDir, ModManifest manifest)
+    private void LoadDll(string modDir, ModManifest manifest)
     {
         var dllPath = Path.Combine(modDir, manifest.EntryAssembly!);
         if (!File.Exists(dllPath))
@@ -395,7 +398,7 @@ public static class ModLoader
     /// <exception cref="FileNotFoundException">
     /// The entry script could not be found at the specified path.
     /// </exception>
-    private static void LoadScript(string modDir, ModManifest manifest, Action<string> log)
+    private void LoadScript(string modDir, ModManifest manifest, Action<string> log)
     {
         var path = Path.Combine(modDir, manifest.EntryScript!);
         if (!File.Exists(path))
@@ -405,28 +408,28 @@ public static class ModLoader
         var source = File.ReadAllText(path);
 
         // mods load before the game is running, so the actual work waits for OnReady
-        GodotBridge.OnReady(() =>
+        godotBridge.OnReady(() =>
         {
-            var script = GodotBridge.Instantiate("GDScript");
-            GodotBridge.Set(script, "source_code", source);
+            var script = godotBridge.Instantiate("GDScript");
+            godotBridge.Set(script, "source_code", source);
 
-            var result = Convert.ToInt64(GodotBridge.Call(script, "reload"));
+            var result = Convert.ToInt64(godotBridge.Call(script, "reload"));
             if (result != 0)
             {
                 log($"{manifest.Id}: GDScript failed to compile (error {result}), see the game console");
                 return;
             }
 
-            var instance = GodotBridge.Call(script, "new")!;
+            var instance = godotBridge.Call(script, "new")!;
             _scriptInstances.Add(instance);
-            GodotBridge.Call(instance, "set_meta", "mod_dir", modDir);
-            GodotBridge.Call(instance, "set_meta", "misaml", GodotBridge.ScriptApi);
+            godotBridge.Call(instance, "set_meta", "mod_dir", modDir);
+            godotBridge.Call(instance, "set_meta", "misaml", godotBridge.ScriptApi);
 
-            if (Equals(GodotBridge.Call(instance, "is_class", "Node"), true))
+            if (Equals(godotBridge.Call(instance, "is_class", "Node"), true))
             {
-                var tree = GodotBridge.CallStatic("Godot.Engine", "GetMainLoop")!;
-                var root = GodotBridge.Get(tree, "root")!;
-                GodotBridge.Call(root, "add_child", instance);
+                var tree = godotBridge.CallStatic("Godot.Engine", "GetMainLoop")!;
+                var root = godotBridge.Get(tree, "root")!;
+                godotBridge.Call(root, "add_child", instance);
             }
             else
             {

@@ -29,12 +29,6 @@ internal static class Log
 }
 
 // struct for results of search, readonly means immutable, record means data focused!
-public readonly record struct SearchResult(
-    int TypesScanned,
-    int Patchable,
-    int Skipped,
-    int Failed
-);
 
 // shared by bridge/asm/mnemonimov/godotsharp!!! the reflection + probe then unpatch
 // logic is here! each method is patched just long enough so harmony can see if it

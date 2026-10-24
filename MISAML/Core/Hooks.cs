@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using HarmonyLib;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using MISAML.Interfaces;
 
 namespace MISAML.Core;
@@ -25,8 +26,14 @@ namespace MISAML.Core;
 /// <summary>
 /// Provides a mod-facing API for lazily patching methods and chaining handlers.
 /// </summary>
-public class Hooks(ILogger<Hooks> logger) : IHooks
+public class Hooks() : IHooks
 {
+    private static ILogger _logger = NullLogger.Instance;
+
+    public Hooks(ILogger<Hooks> logger) : this()
+    {
+        _logger = logger;
+    }
 
     // Harmony instance used for all MISAML patches.
     internal static readonly Harmony Harmony = new("MISAML");
@@ -159,7 +166,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     {
         if (type?.FullName == null)
         {
-            logger.LogError($"failed to register '{type}::{methodName}'. a type with a full name is required!");
+            _logger.LogError($"failed to register '{type}::{methodName}'. a type with a full name is required!");
             return false;
         }
 
@@ -203,7 +210,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     {
         if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(methodName) || handler == null)
         {
-            logger.LogError($"failed to register '{typeName}::{methodName}'. type, method and handler are all required!");
+            _logger.LogError($"failed to register '{typeName}::{methodName}'. type, method and handler are all required!");
             return false;
         }
 
@@ -212,7 +219,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
         var (name, signature) = SplitSignature(methodName);
         if (name.Length == 0)
         {
-            logger.LogError($"failed to register '{typeName}::{methodName}', the method name is empty!");
+            _logger.LogError($"failed to register '{typeName}::{methodName}', the method name is empty!");
             return false;
         }
 
@@ -240,7 +247,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
             total = next.Length;
         }
 
-        logger.LogInformation($"{label}: successfully registered handler from {owner} (priority {priority}), position {pos} of {total}!");
+        _logger.LogInformation($"{label}: successfully registered handler from {owner} (priority {priority}), position {pos} of {total}!");
 
         EnsurePatched(typeName, name, signature, label);
         return true;
@@ -453,7 +460,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
             if (signature == null && sameName.Count > 1)
             {
                 var overloads = string.Join(" | ", sameName.Select(m => $"({SignatureOf(m)})"));
-                logger.LogError($"{typeName}::{methodName} has several overloads: {overloads}. Use one of those signatures, or {methodName}(*) to hook all of them");
+                _logger.LogError($"{typeName}::{methodName} has several overloads: {overloads}. Use one of those signatures, or {methodName}(*) to hook all of them");
                 return found;
             }
 
@@ -465,13 +472,13 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
                 // child type it came through
                 if (method.IsStatic && method.DeclaringType != type)
                 {
-                    logger.LogError($"{typeName}::{methodName} is a static method declared on {method.DeclaringType?.FullName}, register the handler on that type instead");
+                    _logger.LogError($"{typeName}::{methodName} is a static method declared on {method.DeclaringType?.FullName}, register the handler on that type instead");
                     continue;
                 }
 
                 if (method.IsAbstract || method.IsGenericMethodDefinition)
                 {
-                    logger.LogError($"{typeName}::{methodName}({SignatureOf(method)}) is abstract or generic, can't be hooked");
+                    _logger.LogError($"{typeName}::{methodName}({SignatureOf(method)}) is abstract or generic, can't be hooked");
                     continue;
                 }
 
@@ -479,7 +486,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
                 // the game which is obv problematic
                 if (method.DeclaringType == typeof(object))
                 {
-                    logger.LogError($"{typeName}::{methodName} is declared on System.Object, refusing to hook it");
+                    _logger.LogError($"{typeName}::{methodName} is declared on System.Object, refusing to hook it");
                     continue;
                 }
 
@@ -491,13 +498,13 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
             if (signature != null && found.Count == 0 && sameName.Count > 0)
             {
                 var have = string.Join(" | ", sameName.Select(m => $"({SignatureOf(m)})"));
-                logger.LogError($"{typeName}::{methodName}({signature}) matches no overload, the ones that exist are: {have}");
+                _logger.LogError($"{typeName}::{methodName}({signature}) matches no overload, the ones that exist are: {have}");
             }
         }
         catch (Exception e)
         {
             // an assembly that can't be searched must never break an assembly load
-            logger.LogDebug($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
+            _logger.LogDebug($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
         }
 
         return found;
@@ -566,11 +573,11 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
             // mark the target only after harmony patches successfully
             PatchedMethods.Add(method.MethodHandle);
             PatchedKeys.Add(patchKey);
-            logger.LogInformation($"patched {method.DeclaringType?.FullName}::{method.Name}({SignatureOf(method)})");
+            _logger.LogInformation($"patched {method.DeclaringType?.FullName}::{method.Name}({SignatureOf(method)})");
         }
         catch (Exception e)
         {
-            logger.LogWarning(e, $"failed to patch {patchKey}, its handlers will not run");
+            _logger.LogWarning(e, $"failed to patch {patchKey}, its handlers will not run");
         }
     }
 
@@ -583,7 +590,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     /// <param name="__instance">The instance the method is called on.</param>
     /// <param name="__args">The method's arguments.</param>
     /// <returns>False if the original method should be skipped, else, true.</returns>
-    private  bool GenericPrefixVoidInstance(MethodBase __originalMethod, object __instance, object[] __args)
+    private static bool GenericPrefixVoidInstance(MethodBase __originalMethod, object __instance, object[] __args)
         => !RunChain(__originalMethod, __instance, __args).SkipOriginal;
 
     // prefix for void static methods
@@ -593,7 +600,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     /// <param name="__originalMethod">The original method being called.</param>
     /// <param name="__args">The method's arguments.</param>
     /// <returns>False if the original method should be skipped, else, true.</returns>
-    private  bool GenericPrefixVoidStatic(MethodBase __originalMethod, object[] __args)
+    private static bool GenericPrefixVoidStatic(MethodBase __originalMethod, object[] __args)
         => !RunChain(__originalMethod, null, __args).SkipOriginal;
 
     // prefix for instance methods that return a value
@@ -605,7 +612,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     /// <param name="__args">The method's arguments.</param>
     /// <param name="__result">The return value, which may be replaced by a handler.</param>
     /// <returns>False if the original method should be skipped, else, true.</returns>
-    private  bool GenericPrefixResultInstance(MethodBase __originalMethod, object __instance, object[] __args, ref object __result)
+    private static bool GenericPrefixResultInstance(MethodBase __originalMethod, object __instance, object[] __args, ref object __result)
         => !ApplyReplacement(__originalMethod, RunChain(__originalMethod, __instance, __args), ref __result);
 
     /// <summary>
@@ -615,7 +622,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     /// <param name="__args">The method's arguments.</param>
     /// <param name="__result">The return value, which may be replaced by a handler.</param>
     /// <returns>False if the original method should be skipped, else, true.</returns>
-    private  bool GenericPrefixResultStatic(MethodBase __originalMethod, object[] __args, ref object __result)
+    private static bool GenericPrefixResultStatic(MethodBase __originalMethod, object[] __args, ref object __result)
         => !ApplyReplacement(__originalMethod, RunChain(__originalMethod, null, __args), ref __result);
 
     // runs the handlers registered for the original method in order, until one
@@ -627,7 +634,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     /// <param name="instance">The instance the method is called on, or null for static methods.</param>
     /// <param name="args">The method's arguments.</param>
     /// <returns>The first replacement result, or a result indicating that the original method should run.</returns>
-    private HookResult RunChain(MethodBase original, object? instance, object?[] args)
+    private static HookResult RunChain(MethodBase original, object? instance, object?[] args)
     {
         var chain = CollectChain(original, instance);
         if (chain.Count == 0) return HookResult.Continue();
@@ -645,7 +652,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
             // its own syscall).
             if (Core.DebugEnabled && i < chain.Count - 1)
             {
-                logger.LogDebug($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
+                _logger.LogDebug($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
             }
 
             return result;
@@ -704,7 +711,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     /// <param name="result">The handler's result.</param>
     /// <param name="value">The return value to replace if valid.</param>
     /// <returns>True if the replacement is accepted and the original method should be skipped.</returns>
-    private bool ApplyReplacement(MethodBase original, HookResult result, ref object value)
+    private static bool ApplyReplacement(MethodBase original, HookResult result, ref object value)
     {
         if (!result.SkipOriginal) return false;
 
@@ -717,7 +724,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
 
         if (!fit)
         {
-            logger.LogWarning($"{original.DeclaringType?.FullName}.{original.Name} returns {returnType.FullName}, but a handler replaced it with {result.Value?.GetType().FullName ?? "null"}, ignoring the replacement");
+            _logger.LogWarning($"{original.DeclaringType?.FullName}.{original.Name} returns {returnType.FullName}, but a handler replaced it with {result.Value?.GetType().FullName ?? "null"}, ignoring the replacement");
             return false;
         }
 
@@ -736,7 +743,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
     /// <param name="args">The original method's arguments.</param>
     /// <param name="original">The original method being called.</param>
     /// <returns>The handler's result, or Continue if it throws.</returns>
-    private HookResult InvokeSafely(
+    private static HookResult InvokeSafely(
         Registration registration,
         object? instance,
         object?[] args,
@@ -751,7 +758,7 @@ public class Hooks(ILogger<Hooks> logger) : IHooks
         catch (Exception e)
         {
             // handler failed, log the error & don't replace the orig, continue
-            logger.LogWarning(e, $"handler from {registration.Owner} for {original.DeclaringType?.FullName}.{original.Name} threw: {e.Message}");
+            _logger.LogWarning(e, $"handler from {registration.Owner} for {original.DeclaringType?.FullName}.{original.Name} threw: {e.Message}");
             return HookResult.Continue();
         }
     }

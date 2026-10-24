@@ -9,7 +9,7 @@ namespace MISAML.Debug;
 
 // Every type in GodotSharp.dll, public and private, it's the whole engine API,
 // not entirely needed and very large. Docs on this will be limited.
-public class GodotSharp(ILogger<GodotSharp> logger, Debug search) : IGodotSharp
+public class GodotSharp(ILogger<GodotSharp> logger, IDebug search) : IGodotSharp
 {
     // Found via: monodis --output=X.il <dll>, then
     //   rg -o '\[GodotSharp\][\w.]+::\w+' mnemonimov.il asm.il --no-filename | sort -u

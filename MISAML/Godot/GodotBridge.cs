@@ -3,12 +3,20 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using MISAML.Interfaces;
 
 namespace MISAML.Godot;
 
-public class GodotBridge(ILogger<GodotBridge> logger) : IGodotBridge
+using Microsoft.Extensions.Logging;
+
+public class GodotBridge() : IGodotBridge
 {
+    private static ILogger _logger = NullLogger.Instance;
+    public GodotBridge(ILogger<GodotBridge> logger) : this()
+    {
+        _logger = logger;
+    }
 
     private static Assembly? _isolatedApi;
     private static readonly Dictionary<string, MethodInfo> _cache = new();
@@ -33,7 +41,7 @@ public class GodotBridge(ILogger<GodotBridge> logger) : IGodotBridge
                          ?? throw new Exception($"Primitives.{name} not found!");
 
             _cache[name] = method;
-            logger.LogDebug($"resolved {name}");
+            _logger.LogDebug($"resolved {name}");
             return method;
         }
     }
@@ -70,7 +78,7 @@ public class GodotBridge(ILogger<GodotBridge> logger) : IGodotBridge
     // bridge for GDScript -> C#
     private readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
     {
-        ["log"] = args => { logger.LogInformation("Script", string.Join(" ", args)); return null; },
+        ["log"] = args => { _logger.LogInformation("Script", args: args); return null; },
     };
 
     private static object? _scriptApi;
@@ -145,7 +153,7 @@ public class GodotBridge(ILogger<GodotBridge> logger) : IGodotBridge
         RunOnMainThread(() =>
         {
             foreach (var a in run)
-                try { a(); } catch (Exception e) { logger.LogWarning($"ready handler threw: {e.Message}"); }
+                try { a(); } catch (Exception e) { _logger.LogWarning($"ready handler threw: {e.Message}"); }
         });
     }
 

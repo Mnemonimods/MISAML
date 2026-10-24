@@ -6,7 +6,7 @@ using MISAML.Debug.Interfaces;
 namespace MISAML.Debug;
 
 // Mnemonimov's known [GlobalClass] bridge types.
-public class Bridge(Debug debug) : IBridge
+public class Bridge(IDebug debug) : IBridge
 {
     // This is a complete, confirmed list 
     // based on the discovery method documented.

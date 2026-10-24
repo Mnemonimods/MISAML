@@ -17,18 +17,18 @@ public class DependencyInjector : IDisposable
     private readonly string logPath = Path.Combine(
         Path.GetDirectoryName(typeof(DependencyInjector).Assembly.Location)!
         , "misaml.log"
-        );
+    );
 
     public ServiceProvider Services { get; private set; } = null!;
-    
+
     public void Initialize()
     {
         var serilogLogger = new LoggerConfiguration()
             .WriteTo.Console()
-            .WriteTo.File(logPath, 
+            .WriteTo.File(logPath,
                 retainedFileCountLimit: null)
             .CreateLogger();
-            
+
         var services = new ServiceCollection();
 
         services.AddLogging(logging =>
@@ -53,15 +53,14 @@ public class DependencyInjector : IDisposable
         services.AddTransient<IModSettings, ModSettings>();
         services.AddTransient<IVersionReq, VersionReq>();
         services.AddSingleton<Loader>();
-        
-        if(Core.Core.DebugEnabled)
-        {
-            services.AddSingleton<IBridge, Bridge>();
-            services.AddSingleton<IGodotSharp, GodotSharp>();
-            services.AddSingleton<IMnemonimov, Mnemonimov>();
-            services.AddSingleton<IDebug, Debug.Debug>();
-            services.AddSingleton<IAsm, Asm>();
-        }
+        services.AddSingleton<GodotBridgePatch>();
+
+        // debug things but that are required for the dependency injection, lol
+        services.AddSingleton<IDebug, Debug.Debug>();
+        services.AddSingleton<IBridge, Bridge>();
+        services.AddSingleton<IGodotSharp, GodotSharp>();
+        services.AddSingleton<IMnemonimov, Mnemonimov>();
+        services.AddSingleton<IAsm, Asm>();
 
         Services = services.BuildServiceProvider();
     }

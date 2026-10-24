@@ -76,10 +76,10 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
         var injector = new DependencyInjector();
         injector.Initialize();
         AppDomain.CurrentDomain.ProcessExit += (sender, e) => injector.Dispose();
-        
+
         var logger = injector.Services.GetRequiredService<ILogger<Loader>>();
         logger.LogInformation("Starting, waiting for Mnemonimov...");
-        
+
         Instance = injector.Services.GetRequiredService<Loader>();
         AppDomain.CurrentDomain.AssemblyLoad += Instance.OnAssemblyLoad;
     }

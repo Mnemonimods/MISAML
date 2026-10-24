@@ -14,19 +14,19 @@ namespace MISAML.Core;
 // Purpose: always hook GodotBridgePatch when Mnemonimov loads (bootstrap),
 // and if MISAML_DEBUG=1, run the MISAML.Debug methods.
 public class Core(
-    IGodotBridgePatch godotBridgePatch, 
-    ILogger<Core> logger, 
-    IAsm asm, 
-    IBridge bridge, 
-    IMnemonimov mnemonimov, 
+    IGodotBridgePatch godotBridgePatch,
+    ILogger<Core> logger,
+    IAsm asm,
+    IBridge bridge,
+    IMnemonimov mnemonimov,
     IGodotSharp godotSharp
     ) : ICore
 {
-    
+
     // just check env for debug logging
     public static readonly bool DebugEnabled
         = Environment.GetEnvironmentVariable("MISAML_DEBUG") != null;
-    
+
     public void Initialize()
     {
         logger.LogInformation("MISAML.Core starting...");
@@ -84,7 +84,7 @@ public class Core(
     //TODO: Add individual timestamping for each method ran in MISAML.Debug
     private void RunSearch(string label, SearchResult result)
     {
-        logger.LogInformation(label,@$"
+        logger.LogInformation(label, @$"
             complete: {result.TypesScanned} types, {result.Patchable} patchable,
             {result.Skipped} skipped, {result.Failed} failed. 
             Full list at misaml-debug.log"

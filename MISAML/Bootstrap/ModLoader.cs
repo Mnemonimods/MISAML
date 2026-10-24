@@ -7,7 +7,6 @@ using System.Runtime.Loader;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using System.Text.RegularExpressions;
-using MISAMl.Bootstrap.Records;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
@@ -72,9 +71,6 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
     // mod ids & dep ids, letters, digits '.', '_', '-', max 64
     private static readonly Regex IdPattern = new(@"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
-
-    // owner and repo names on git (make it uh, better later, support other urls)
-    private static readonly Regex GitName = new(@"^[A-Za-z0-9._-]+$");
 
     private static string CleanSource(string depId, string source)
     {
@@ -166,9 +162,9 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             return;
         }
 
-        // hook this once to resolve any dependency DLL a mod entry assembly
-        // (or another dependency) references, by looking for <name>.dll
-        // alongside it in any known mod folder!
+        // assembly name -> full path, for every DLL in every mod that will
+        // load, incl. subfolders, before any mod loads, the Resolving hook
+        // looks up names here
         if (!_resolvingHooked)
         {
             _resolvingHooked = true;
@@ -183,12 +179,10 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         }
 
         // pass one, before any mod loads, list every mod folder (sorted)
-        // and index every DLL in them, so a mod can use a DLL from a mod that
-        // sorts after it
         _modDirs.Clear();
-        _modDirs.AddRange(Directory.GetDirectories(modsDir).OrderBy(dir => dir, StringComparer.Ordinal));
-        logger.LogInformation("Building DLL index...");
-        BuildDllIdx();
+        _modDirs.AddRange(Directory.GetDirectories(modsDir)
+            .Where(dir => !Path.GetFileName(dir).StartsWith('.'))
+            .OrderBy(dir => dir, StringComparer.Ordinal));
 
         // misaml.toml sits next to the mods folder
         var settings = modSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")));
@@ -275,8 +269,36 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             logger.LogWarning($"{m.Id}: not loading, {skipped.Reason}");
         }
 
+        // only mods that will actually load get dlls idx'ed
+        _dllIndex.Clear();
+        BuildDllIdx([.. result.LoadOrder.Select(m => m.Dir)], log);
+
+        var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var mod in result.LoadOrder)
-            LoadMod(mod.Dir, mod.Manifest);
+        {
+            var m = mod.Manifest;
+
+            // deps come first in LoadOrder, so it's already known if each one worked
+            var broken = m.Dependencies.FirstOrDefault(d => failed.Contains(d.Id));
+            if (broken != null)
+            {
+                var reason = $"needs {broken.Id}, which failed to load";
+                _mods.Add(new ModStatus(m.Id, m.Name, m.Version, true, false, reason, m.Description));
+                log($"{m.Id}: not loading, {reason}");
+                failed.Add(m.Id);
+                continue;
+            }
+
+            if (!LoadMod(mod.Dir, m, log))
+                failed.Add(m.Id);
+        }
+
+        var loaded = _mods.Count(s => s.Loaded);
+        var notLoaded = _mods.Count(s => s.Enabled && !s.Loaded);
+        var disabled = _mods.Count(s => !s.Enabled);
+
+        log($"{loaded} of {_mods.Count} mods loaded ({notLoaded} not loaded, {disabled} disabled)");
     }
 
     private List<ReadMod> ReadMods()
@@ -344,7 +366,10 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             var ue = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
             err = $"{ue.GetType().Name}: {ue.Message.Trim()}";
         }
-        
+
+        _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
+        log(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
+        return err == null;
     }
 
     /// <summary>
@@ -353,9 +378,10 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
     /// </summary>
     /// <param name="log">Receives warnings for duplicate assemblies and
     /// directories that could not be read.</param>
-    private void BuildDllIdx()
+    /// <param name="dirs">The mod folders to scan for assemblies.</param>
+    private void BuildDllIdx(IReadOnlyList<string> dirs, Action<string> log)
     {
-        foreach (var modDir in _modDirs)
+        foreach (var modDir in dirs)
         {
             try
             {
@@ -381,7 +407,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             }
         }
 
-        logger.LogInformation($"indexed {_dllIndex.Count} assemblies from {_modDirs.Count} mod folders");
+        log($"indexed {_dllIndex.Count} assemblies from {dirs.Count} mod folders");
     }
 
     /// <summary>

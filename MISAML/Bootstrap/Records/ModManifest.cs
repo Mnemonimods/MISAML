@@ -1,7 +1,6 @@
 using System.Collections.Generic;
-using MISAML.Bootstrap.Records;
 
-namespace MISAMl.Bootstrap.Records;
+namespace MISAML.Bootstrap.Records;
 
 // parsed version of RawManifest
 public record ModManifest(

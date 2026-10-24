@@ -64,24 +64,8 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
     }
     */
 
-    // exactly what is written in mod.json, every field optional
-    private record RawManifest(
-        string? ModId,
-        string? ModName,
-        string? Version,
-        string? Description,
-        string? Author,
-        string? Source,
-        string? SourceManifest,
-        string? MisamlVersion,
-        string? EntryAssembly,
-        string? EntryMethod,
-        string? EntryScript,
-        Dictionary<string, string>? Dependencies
-    );
-
-    // parsed and tidied version
-    private record ModManifest(
+    // parsed version of RawManifest
+    public record ModManifest(
         string Id,
         string Name,
         string Version,
@@ -95,6 +79,9 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         string? EntryScript,
         IReadOnlyDictionary<string, string> Dependencies
     );
+    
+    // a mod folder w/ parsed manifest
+    private record ReadMod(string Dir, ModManifest Manifest);
 
     // match field names ignoring case, so modId and modid both work
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -120,10 +107,10 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             raw.EntryAssembly,
             raw.EntryMethod,
             raw.EntryScript,
-            // dependency ids are compared ignoring case
             new Dictionary<string, string>(
-                raw.Dependencies ?? new Dictionary<string, string>(),
-                StringComparer.OrdinalIgnoreCase)
+                raw.Dependencies ?? [],
+                StringComparer.OrdinalIgnoreCase
+            )
         );
     }
 
@@ -176,41 +163,9 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             log($"could not read MISAML's own version ('{misamlVer}')");
         }
 
-        // mod id -> the folder that claimed it first
-        var idOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var modDir in _modDirs)
+        foreach (var (modDir, manifest) in ReadMods(log))
         {
-            var manifestPath = Path.Combine(modDir, "mod.json");
-            if (!File.Exists(manifestPath))
-            {
-                log($"skipping {modDir}: no mod manifest");
-                continue;
-            }
-
-            ModManifest? manifest;
-            try
-            {
-                manifest = ParseManifest(File.ReadAllText(manifestPath));
-            }
-            catch (Exception e)
-            {
-                log($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
-                continue;
-            }
-
-            if (manifest == null)
-            {
-                log($"skipping {modDir}: mod manifest parsed to null");
-                continue;
-            }
-
-            if (!idOwners.TryAdd(manifest.Id, modDir))
-            {
-                log($"skipping {modDir}: mod id '{manifest.Id}' is already used by {idOwners[manifest.Id]}");
-                continue;
-            }
-
             settings.TryGetValue(manifest.Id, out var setting);
 
             if (setting is { Enabled: false })
@@ -257,33 +212,77 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                 log($"{manifest.Id}: priority {priority} from misaml.toml");
             }
 
-            // a mod is a dll (entryAssembly), a GDScript (script), or both
-            string? err = null;
+            LoadMod(modDir, manifest, log);
+        }
+    }
 
+    private List<ReadMod> ReadMods(Action<string> log)
+    {
+        var result = new List<ReadMod>();
+
+        // mod id to folder claimed it first
+        var idOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var modDir in _modDirs)
+        {
+            var manifestPath = Path.Combine(modDir, "mod.json");
+            if (!File.Exists(manifestPath))
+            {
+                log($"skipping {modDir}: no mod manifest");
+                continue;
+            }
+
+            ModManifest manifest;
             try
             {
-                if (manifest.EntryAssembly == null && manifest.EntryScript == null)
-                    throw new Exception("mod manifest requires an entry assembly or script!");
-
-                // everything the mod registers while this block runs is owned
-                // by its modId, so Hooks can name the mod in the log
-                using (hooks.EnterMod(manifest.Id))
-                {
-                    if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
-                    if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);
-                }
+                manifest = ParseManifest(File.ReadAllText(manifestPath));
             }
             catch (Exception e)
             {
-                // one broken mod never takes others down with it, Invoke()
-                // wraps errors, show the real one
-                var ue = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
-                err = $"{ue.GetType().Name}: {ue.Message.Trim()}";
+                log($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
+                continue;
             }
 
-            _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
-            log(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
+            if (!idOwners.TryAdd(manifest.Id, modDir))
+            {
+                log($"skipping {modDir}: mod id '{manifest.Id}' is already used by {idOwners[manifest.Id]}");
+                continue;
+            }
+
+            result.Add(new ReadMod(modDir, manifest));
         }
+
+        return result;
+    }
+
+    private void LoadMod(string modDir, ModManifest manifest, Action<string> log)
+    {
+        // a mod is a dll (entryAssembly), a GDScript (script), or both
+        string? err = null;
+
+        try
+        {
+            if (manifest.EntryAssembly == null && manifest.EntryScript == null)
+                throw new Exception("mod manifest requires an entry assembly or script!");
+
+            // everything the mod registers while this block runs is owned
+            // by its modId, so Hooks can name the mod in the log
+            using (hooks.EnterMod(manifest.Id))
+            {
+                if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
+                if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);
+            }
+        }
+        catch (Exception e)
+        {
+            // one broken mod never takes others down with it, Invoke()
+            // wraps errors, show the real one
+            var ue = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
+            err = $"{ue.GetType().Name}: {ue.Message.Trim()}";
+        }
+
+        _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
+        log(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");     
     }
 
     /// <summary>

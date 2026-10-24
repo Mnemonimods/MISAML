@@ -95,10 +95,10 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         return $"https://github.com/{path}";
     }
 
-    private ModManifest ParseManifest(string json, Action<string> log)
+    private ModManifest ParseManifest(string json)
     {
         var raw = JsonSerializer.Deserialize<RawManifest>(json, JsonOptions)
-            ?? throw new Exception("mod.json is empty");
+                  ?? throw new Exception("mod.json is empty");
 
         var id = raw.ModId?.Trim();
         if (string.IsNullOrEmpty(id))
@@ -125,14 +125,14 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                     ? "sourceManifest is not supported yet" //TODO: please.
                     : "unknown key";
 
-                log($"{id}: dependency '{depId}': {reason} '{key}', ignoring it");
+                logger.LogWarning($"{id}: dependency '{depId}': {reason} '{key}', ignoring it");
             }
 
             if (string.IsNullOrWhiteSpace(rawDep.Version))
                 throw new Exception($"dependency '{depId}' needs a version");
 
             var range = versionReq.TryParse(rawDep.Version, out var rangeErr)
-                ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
+                        ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
 
             dependencies.Add(new Dependency(
                 depId,
@@ -212,7 +212,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
         var unavailable = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (modDir, manifest) in ReadMods(log))
+        foreach (var (modDir, manifest) in ReadMods())
         {
             settings.TryGetValue(manifest.Id, out var setting);
 
@@ -272,14 +272,14 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         {
             var m = skipped.Mod.Manifest;
             _mods.Add(new ModStatus(m.Id, m.Name, m.Version, true, false, skipped.Reason, m.Description));
-            log($"{m.Id}: not loading, {skipped.Reason}");
+            logger.LogWarning($"{m.Id}: not loading, {skipped.Reason}");
         }
 
         foreach (var mod in result.LoadOrder)
-            LoadMod(mod.Dir, mod.Manifest, log);
+            LoadMod(mod.Dir, mod.Manifest);
     }
 
-    private List<ReadMod> ReadMods(Action<string> log)
+    private List<ReadMod> ReadMods()
     {
         var result = new List<ReadMod>();
 
@@ -291,24 +291,24 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             var manifestPath = Path.Combine(modDir, "mod.json");
             if (!File.Exists(manifestPath))
             {
-                log($"skipping {modDir}: no mod manifest");
+                logger.LogWarning($"skipping {modDir}: no mod manifest");
                 continue;
             }
 
             ModManifest manifest;
             try
             {
-                manifest = ParseManifest(File.ReadAllText(manifestPath), log);
+                manifest = ParseManifest(File.ReadAllText(manifestPath));
             }
             catch (Exception e)
             {
-                log($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
+                logger.LogWarning($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
                 continue;
             }
 
             if (!idOwners.TryAdd(manifest.Id, modDir))
             {
-                log($"skipping {modDir}: mod id '{manifest.Id}' is already used by {idOwners[manifest.Id]}");
+                logger.LogWarning($"skipping {modDir}: mod id '{manifest.Id}' is already used by {idOwners[manifest.Id]}");
                 continue;
             }
 
@@ -318,7 +318,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         return result;
     }
 
-    private void LoadMod(string modDir, ModManifest manifest, Action<string> log)
+    private void LoadMod(string modDir, ModManifest manifest)
     {
         // a mod is a dll (entryAssembly), a GDScript (script), or both
         string? err = null;
@@ -329,25 +329,22 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                 throw new Exception("mod manifest requires an entry assembly or script!");
 
 
-                // everything the mod registers while this block runs is owned
-                // by its modId, so Hooks can name the mod in the log
-                using (hooks.EnterMod(manifest.Id))
-                {
-                    if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
-                    if (manifest.EntryScript != null) LoadScript(modDir, manifest);
-                }
-            }
-            catch (Exception e)
+            // everything the mod registers while this block runs is owned
+            // by its modId, so Hooks can name the mod in the log
+            using (hooks.EnterMod(manifest.Id))
             {
-                // one broken mod never takes others down with it, Invoke()
-                // wraps errors, show the real one
-                var ue = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
-                err = $"{ue.GetType().Name}: {ue.Message.Trim()}";
+                if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
+                if (manifest.EntryScript != null) LoadScript(modDir, manifest);
             }
-        
-            _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
-            logger.LogInformation(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
         }
+        catch (Exception e)
+        {
+            // one broken mod never takes others down with it, Invoke()
+            // wraps errors, show the real one
+            var ue = e is TargetInvocationException { InnerException: { } inner } ? inner : e;
+            err = $"{ue.GetType().Name}: {ue.Message.Trim()}";
+        }
+        
     }
 
     /// <summary>
@@ -433,11 +430,11 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         var methodName = manifest.EntryMethod[(split + 1)..];
 
         var entryType = asm.GetType(className)
-            ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");
+                        ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");
 
         var initMethod = entryType.GetMethod(
-                methodName, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)
-            ?? throw new Exception($"{className}.{methodName}() not found (must be public static, no parameters)");
+                             methodName, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)
+                         ?? throw new Exception($"{className}.{methodName}() not found (must be public static, no parameters)");
 
         initMethod.Invoke(null, null);
     }

@@ -28,7 +28,7 @@ public class RawDependencyConverter : JsonConverter<RawDependency>
             throw new JsonException("a dependency must be a version string or an object");
 
         using var doc = JsonDocument.ParseValue(ref reader);
-        
+
         var dependency = new RawDependency();
 
         foreach (var property in doc.RootElement.EnumerateObject())
@@ -42,7 +42,7 @@ public class RawDependencyConverter : JsonConverter<RawDependency>
                 dependency.Source = ReadString(property.Value);
             else
                 dependency.UnknownKeys.Add(property.Name);
-                
+
         }
 
         return dependency;

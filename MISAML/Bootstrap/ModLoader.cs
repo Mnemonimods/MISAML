@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
@@ -79,14 +80,39 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         string? EntryScript,
         IReadOnlyList<Dependency> Dependencies
     );
-    
+
     // a mod folder w/ parsed manifest
     public record ReadMod(string Dir, ModManifest Manifest);
 
     // match field names ignoring case, so modId and modid both work
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    private ModManifest ParseManifest(string json)
+    // mod ids & dep ids, letters, digits '.', '_', '-', max 64
+    private static readonly Regex IdPattern = new(@"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$");
+
+    // owner and repo names on git (make it uh, better later, support other urls)
+    private static readonly Regex GitName = new(@"^[A-Za-z0-9._-]+$");
+
+    private static string CleanSource(string depId, string source)
+    {
+        if (!Uri.TryCreate(source.Trim(), UriKind.Absolute, out var uri)
+            || uri.Scheme != Uri.UriSchemeHttps
+            || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+            throw new Exception($"dependency '{depId}' has a bad source '{source}'");
+
+        var path = uri.AbsolutePath.Trim('/');
+        if (path.EndsWith(".git")) path = path[..^4];
+
+        if (path.Split('/').Length != 2)
+            throw new Exception($"dependency '{depId}' has a bad source '{source}'");
+
+        if (path.Split('/').Any(string.IsNullOrEmpty))
+            throw new Exception($"dependency '{depId}' has a bad source '{source}'");
+
+        return $"https://github.com/{path}";
+    }
+
+    private ModManifest ParseManifest(string json, Action<string> log)
     {
         var raw = JsonSerializer.Deserialize<RawManifest>(json, JsonOptions)
             ?? throw new Exception("mod.json is empty");
@@ -94,6 +120,9 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         var id = raw.ModId?.Trim();
         if (string.IsNullOrEmpty(id))
             throw new Exception("mod.json needs a modId");
+
+        if (!IdPattern.IsMatch(id))
+            throw new Exception($"modId '{id}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
 
         var dependencies = new List<Dependency>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -103,14 +132,31 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             // ids ignore case
             if (!seen.Add(depId))
                 throw new Exception($"dependencies lists '{depId}' twice");
-            
+
+            if (!IdPattern.IsMatch(depId))
+                throw new Exception($"depId '{depId}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
+
+            foreach (var key in rawDep.UnknownKeys)
+            {
+                var reason = key.Equals("sourceManifest", StringComparison.OrdinalIgnoreCase)
+                    ? "sourceManifest is not supported yet" //TODO: please.
+                    : "unknown key";
+
+                log($"{id}: dependency '{depId}': {reason} '{key}', ignoring it");
+            }
+
             if (string.IsNullOrWhiteSpace(rawDep.Version))
                 throw new Exception($"dependency '{depId}' needs a version");
 
             var range = versionReq.TryParse(rawDep.Version, out var rangeErr)
                 ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
 
-            dependencies.Add(new Dependency(depId, rawDep.Version, range, rawDep.Source));
+            dependencies.Add(new Dependency(
+                depId,
+                rawDep.Version,
+                range,
+                rawDep.Source == null ? null : CleanSource(depId, rawDep.Source)
+            ));
         }
 
         return new ModManifest(
@@ -254,7 +300,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             ModManifest manifest;
             try
             {
-                manifest = ParseManifest(File.ReadAllText(manifestPath));
+                manifest = ParseManifest(File.ReadAllText(manifestPath), log);
             }
             catch (Exception e)
             {
@@ -301,7 +347,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         }
 
         _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
-        log(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");     
+        log(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
     }
 
     /// <summary>

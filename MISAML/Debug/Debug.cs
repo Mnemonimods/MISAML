@@ -5,35 +5,18 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using HarmonyLib;
+using Microsoft.Extensions.Logging;
+using MISAML.Debug.Interfaces;
+using Serilog;
 
 namespace MISAML.Debug;
-
-internal static class Log
-{
-    private static readonly string LogPath = Path.Combine(
-        Path.GetDirectoryName(typeof(Log).Assembly.Location)!,
-        "misaml-debug.log"
-    );
-
-    private static bool _clr = false;
-
-    public static void Write(string l)
-    {
-        if (!_clr)
-        {
-            File.WriteAllText(LogPath, "");
-            _clr = true;
-        }
-        File.AppendAllText(LogPath, l + "\n");
-    }
-}
 
 // struct for results of search, readonly means immutable, record means data focused!
 
 // shared by bridge/asm/mnemonimov/godotsharp!!! the reflection + probe then unpatch
 // logic is here! each method is patched just long enough so harmony can see if it
 // can make IL for it! then we unpatch, just a one time discovery thingy!!
-internal static class Search
+public class Debug(ILogger<Debug> logger) : IDebug
 {
 
     // How the bridge list below was found:
@@ -120,7 +103,7 @@ internal static class Search
         }
     }
 
-    public static SearchResult Run(
+    public SearchResult Run(
         Harmony harmony, IEnumerable<Type?> types, string label
     /* enumerable because it's an array! */
     )
@@ -164,7 +147,7 @@ internal static class Search
 
     // same thing as Run(types), but for an exact, already known set
     // of methods instead of every method on every given type.
-    public static SearchResult RunMethods(Harmony harmony, IEnumerable<MethodInfo> methods, string label)
+    public SearchResult RunMethods(Harmony harmony, IEnumerable<MethodInfo> methods, string label)
     {
         var methodList = methods.ToArray();
 
@@ -176,7 +159,7 @@ internal static class Search
     }
 
     // the probe, patch, log, unpatched loop, shared by Run and RunMethods.
-    private static void ProbeAll(
+    private void ProbeAll(
         Harmony harmony,
         IEnumerable<(Type type, MethodInfo method)> methods,
         string label,
@@ -187,11 +170,11 @@ internal static class Search
     {
         // find the patch methods and wrap them for harmony (confused me...)
         var prefix = new HarmonyMethod(
-            typeof(Search).GetMethod(nameof(ProbePrefix), BindingFlags.NonPublic | BindingFlags.Static)
+            typeof(Debug).GetMethod(nameof(ProbePrefix), BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new Exception("ProbePrefix not found!"));
 
         var postfix = new HarmonyMethod(
-            typeof(Search).GetMethod(nameof(ProbePostfix), BindingFlags.NonPublic | BindingFlags.Static)
+            typeof(Debug).GetMethod(nameof(ProbePostfix), BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new Exception("ProbePostfix not found!"));
 
         foreach (var (type, method) in methods)
@@ -201,7 +184,7 @@ internal static class Search
             // skips abstract and open generic stuff!!!!
             if (method.IsAbstract || method.ContainsGenericParameters)
             {
-                Log.Write($"SKIP|{label}|{sig}|abstract or open-generic!");
+                logger.LogDebug($"SKIP|{label}|{sig}|abstract or open-generic!");
                 skipped++;
                 continue;
             }
@@ -209,7 +192,7 @@ internal static class Search
             // one of our skipname ones!!!
             if (SkipNames.Contains(method.Name))
             {
-                Log.Write($"SKIP|{label}|{sig}|Godot interop override!");
+                logger.LogDebug($"SKIP|{label}|{sig}|Godot interop override!");
                 skipped++;
                 continue;
             }
@@ -218,7 +201,7 @@ internal static class Search
             // the original methods that harmony has patched!!!
             if (harmony.GetPatchedMethods().Contains(method))
             {
-                Log.Write($"SKIP|{label}|{sig}|already patched elsewhere!");
+                logger.LogDebug($"SKIP|{label}|{sig}|already patched elsewhere!");
                 continue;
             }
 
@@ -226,7 +209,7 @@ internal static class Search
             if (method.GetCustomAttributes(inherit: false)
                 .Any(a => a.GetType().Name == "UnmanagedCallersOnlyAttribute"))
             {
-                Log.Write($"SKIP|{label}|{sig}|UnmanagedCallersOnly, native only!");
+                logger.LogDebug($"SKIP|{label}|{sig}|UnmanagedCallersOnly, native only!");
                 skipped++;
                 continue;
             }
@@ -240,12 +223,12 @@ internal static class Search
             try
             {
                 harmony.Patch(method, prefix: prefix, postfix: usePostfix);
-                Log.Write($"OK|{label}|{sig}|");
+                logger.LogDebug($"OK|{label}|{sig}|");
                 ok++;
             }
             catch (Exception e)
             {
-                Log.Write($"FAIL|{label}|{sig}|{e.GetType().Name}: {e.Message}");
+                logger.LogDebug($"FAIL|{label}|{sig}|{e.GetType().Name}: {e.Message}");
                 failed++;
                 continue;
             }
@@ -256,7 +239,7 @@ internal static class Search
             }
             catch (Exception e)
             {
-                Log.Write($"WARN|{label}|{sig}|patched but failed to unpatch: {e.GetType().Name}: {e.Message}");
+                logger.LogWarning($"WARN|{label}|{sig}|patched but failed to unpatch: {e.GetType().Name}: {e.Message}");
             }
         }
     }
@@ -336,120 +319,8 @@ internal static class Search
     private static void ProbePostfix(MethodBase __originalMethod, object __result) { }
 }
 
-// Mnemonimov's known [GlobalClass] bridge types.
-public static class Bridge
-{
-    // This is a complete, confirmed list 
-    // based on the discovery method documented.
-    //
-    // As of the build this was checked against, these are also all of the
-    // game's .cs files: 6 files total, with 5 being bridge classes and the
-    // remaining one being the MatchMode enum (so it isn't a bridge).
-    //
-    // This was confirmed with:
-    //
-    // find decompiled_mnemonimov extracted -name "*.cs" | sort -u
-    private static readonly string[] TypeNames =
-    [
-        "Mnemonimov.src.asm.VirtualMachineRunner",
-        "Mnemonimov.src.asm.ShellLexer",
-        "Mnemonimov.src.asm.AssemblerRunner",
-        "Mnemonimov.src.asm.TextSearcher",
-        "Mnemonimov.src.asm.CsUtils",
-    ];
 
-    public static SearchResult Run(Harmony harmony, Assembly mnemonimovAssembly)
-        => Search.Run(harmony, TypeNames.Select(mnemonimovAssembly.GetType), "Bridge");
-}
 
-// Every type in Asm.dll, the VM itself.
-public static class Asm
-{
-    public static SearchResult Run(Harmony harmony, Assembly asmAssembly)
-        => Search.Run(harmony, Search.AllTypesOf(asmAssembly, "Asm"), "Asm");
-}
 
-// Every type in Mnemonimov.dll, including (and beyond) the bridge types.
-public static class Mnemonimov
-{
-    public static SearchResult Run(Harmony harmony, Assembly mneminomovAssembly)
-        => Search.Run(harmony, Search.AllTypesOf(mneminomovAssembly, "Mnemonimov"), "Mnemonimov");
-}
 
-// Every type in GodotSharp.dll, public and private, it's the whole engine API,
-// not entirely needed and very large. Docs on this will be limited.
-public static class GodotSharp
-{
-    // Found via: monodis --output=X.il <dll>, then
-    //   rg -o '\[GodotSharp\][\w.]+::\w+' mnemonimov.il asm.il --no-filename | sort -u
-    // against the live Mnemonimov.dll/Asm.dll. Redo this after a game
-    // update, same idea as Bridge.TypeNames. 6 of the 26 raw matches
-    // are already in Search's SkipNames (Godot's own interop overrides,
-    // always InvalidProgramException) and are dropped from this list, however
-    // they can still be included.
-    private static readonly (string typeName, string methodName)[] UsedMethods =
-    [
-        ("Godot.Bridge.GodotSerializationInfo", "AddProperty"),
-        ("Godot.Bridge.GodotSerializationInfo", "TryGetProperty"),
-        ("Godot.Collections.Dictionary", "Add"),
-        ("Godot.GodotObject", "Dispose"),
-        ("Godot.Image", "CreateFromData"),
-        ("Godot.Image", "SetData"),
-        ("Godot.ImageTexture", "CreateFromImage"),
-        ("Godot.ImageTexture", "Update"),
-        ("Godot.NativeInterop.NativeVariantPtrArgs", "get_Count"),
-        ("Godot.NativeInterop.NativeVariantPtrArgs", "get_Item"),
-        ("Godot.NativeInterop.VariantUtils", "ConvertTo"),
-        ("Godot.NativeInterop.VariantUtils", "ConvertToDictionary"),
-        ("Godot.NativeInterop.VariantUtils", "CreateFrom"),
-        ("Godot.NativeInterop.VariantUtils", "CreateFromArray"),
-        ("Godot.NativeInterop.VariantUtils", "CreateFromDictionary"),
-        ("Godot.StringName", "op_Equality"),
-        ("Godot.StringName", "op_Implicit"),
-        ("Godot.Variant", "As"),
-        ("Godot.Variant", "From"),
-        ("Godot.Variant", "op_Implicit"),
-    ];
 
-    public static SearchResult Run(Harmony harmony, Assembly godotSharpAssembly)
-        => Search.RunMethods(harmony, ResolveMethods(godotSharpAssembly), "GodotSharp");
-
-    // multiple overloads can share a name, funcs with same name diff params...
-    // (e.g. VarianUtils.CreateFrom<T>), the IL match only gave the name,
-    // so resolve every overload instead of guessing which one
-    private static IEnumerable<MethodInfo> ResolveMethods(Assembly godotSharpAssembly)
-    {
-        // go through every type + method pair we want to find!!!
-        foreach (var (typeName, methodName) in UsedMethods)
-        {
-            var type = godotSharpAssembly.GetType(typeName);
-            if (type == null)
-            {
-                Log.Write($"SKIP|GodotSharp|{typeName}.{methodName}|type not found, game update likely renamed/removed it");
-                continue;
-            }
-
-            MethodInfo[] methods;
-            try
-            {
-                methods = type.GetMethods(
-                    BindingFlags.Public | BindingFlags.NonPublic |
-                    BindingFlags.Instance | BindingFlags.Static |
-                    BindingFlags.DeclaredOnly);
-            }
-            catch
-            {
-                continue;
-            }
-
-            // go through every method and only keep methods with the name we want!!!
-            foreach (var method in methods.Where(m => m.Name == methodName))
-                /* gives this method back to whoever called ResolveMethods() */
-                /* yield pauses here and continues from here when the next */
-                /* method is requested. it allows the function to produce */
-                /* multiple results, per each method. as we can find multiple */
-                /* matching methods per type. */
-                yield return method;
-        }
-    }
-}

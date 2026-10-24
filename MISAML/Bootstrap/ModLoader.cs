@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
@@ -19,7 +20,7 @@ namespace MISAML.Bootstrap;
 //
 // A mod DLL's starting point is named in mod.json by "entryMethod", written as
 // Namespace.Class.Method. The method must be public static with no parameters.
-public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq) : IModLoader
+public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq, ILogger<ModLoader> logger) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;
@@ -127,11 +128,11 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         );
     }
 
-    public void LoadMods(string modsDir, Action<string> log)
+    public void LoadMods(string modsDir)
     {
         if (!Directory.Exists(modsDir))
         {
-            log($"no mods directory at {modsDir}, skipping");
+            logger.LogWarning($"no mods directory at {modsDir}, skipping");
             return;
         }
 
@@ -156,13 +157,14 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         // sorts after it
         _modDirs.Clear();
         _modDirs.AddRange(Directory.GetDirectories(modsDir).OrderBy(dir => dir, StringComparer.Ordinal));
-        BuildDllIdx(log);
+        logger.LogInformation("Building DLL index...");
+        BuildDllIdx();
 
         // misaml.toml sits next to the mods folder
-        var settings = modSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")), log);
+        var settings = modSettings.Load(Path.GetFullPath(Path.Combine(modsDir, "..", "misaml.toml")));
         if (settings == null)
         {
-            log("not loading any mods, because misaml.toml could not be read (fix it, or delete it to get a new one)");
+            logger.LogError("not loading any mods, because misaml.toml could not be read (fix it, or delete it to get a new one)");
             return;
         }
 
@@ -173,7 +175,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         var installedMisaml = versionReq.ParseVersion(misamlVer);
         if (installedMisaml == null)
         {
-            log($"could not read MISAML's own version ('{misamlVer}')");
+            logger.LogError($"could not read MISAML's own version ('{misamlVer}')");
         }
 
         // mod id -> the folder that claimed it first
@@ -184,7 +186,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             var manifestPath = Path.Combine(modDir, "mod.json");
             if (!File.Exists(manifestPath))
             {
-                log($"skipping {modDir}: no mod manifest");
+                logger.LogWarning($"skipping {modDir}: no mod manifest");
                 continue;
             }
 
@@ -195,19 +197,19 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             }
             catch (Exception e)
             {
-                log($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
+                logger.LogWarning($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
                 continue;
             }
 
             if (manifest == null)
             {
-                log($"skipping {modDir}: mod manifest parsed to null");
+                logger.LogWarning($"skipping {modDir}: mod manifest parsed to null");
                 continue;
             }
 
             if (!idOwners.TryAdd(manifest.Id, modDir))
             {
-                log($"skipping {modDir}: mod id '{manifest.Id}' is already used by {idOwners[manifest.Id]}");
+                logger.LogWarning($"skipping {modDir}: mod id '{manifest.Id}' is already used by {idOwners[manifest.Id]}");
                 continue;
             }
 
@@ -216,7 +218,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             if (setting is { Enabled: false })
             {
                 _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null, manifest.Description));
-                log($"{manifest.Id}: disabled, not loading");
+                logger.LogWarning($"{manifest.Id}: disabled, not loading");
                 continue;
             }
 
@@ -225,9 +227,9 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             {
                 var wantedRange = versionReq.TryParse(wanted, out var wantedError);
                 if (wantedRange == null)
-                    log($"{manifest.Id}: misamlVersion {wantedError}, can't check it");
+                    logger.LogWarning($"{manifest.Id}: misamlVersion {wantedError}, can't check it");
                 else if (!wantedRange.Contains(installedMisaml))
-                    log($"{manifest.Id}: WARNING: made for MISAML {wanted}, but this is MISAML {installedMisaml}, issues may occur.");
+                    logger.LogWarning($"{manifest.Id}: WARNING: made for MISAML {wanted}, but this is MISAML {installedMisaml}, issues may occur.");
             }
 
             // misaml.toml can pin which version of a mod the user wants
@@ -244,8 +246,8 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
                 if (problem != null)
                 {
+                    logger.LogWarning($"{manifest.Id}: not loading, {problem}");
                     _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, false, problem, manifest.Description));
-                    log($"{manifest.Id}: not loading, {problem}");
                     continue;
                 }
             }
@@ -254,7 +256,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             if (setting?.Priority is { } priority)
             {
                 hooks.SetModPriority(manifest.Id, priority);
-                log($"{manifest.Id}: priority {priority} from misaml.toml");
+                logger.LogInformation($"{manifest.Id}: priority {priority} from misaml.toml");
             }
 
             // a mod is a dll (entryAssembly), a GDScript (script), or both
@@ -270,7 +272,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                 using (hooks.EnterMod(manifest.Id))
                 {
                     if (manifest.EntryAssembly != null) LoadDll(modDir, manifest);
-                    if (manifest.EntryScript != null) LoadScript(modDir, manifest, log);
+                    if (manifest.EntryScript != null) LoadScript(modDir, manifest);
                 }
             }
             catch (Exception e)
@@ -282,7 +284,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             }
 
             _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
-            log(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
+            logger.LogInformation(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
         }
     }
 
@@ -292,7 +294,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
     /// </summary>
     /// <param name="log">Receives warnings for duplicate assemblies and
     /// directories that could not be read.</param>
-    private void BuildDllIdx(Action<string> log)
+    private void BuildDllIdx()
     {
         foreach (var modDir in _modDirs)
         {
@@ -310,17 +312,17 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                     var name = Path.GetFileNameWithoutExtension(path);
 
                     if (!_dllIndex.TryAdd(name, path))
-                        log($"duplicate assembly '{name}': keeping {_dllIndex[name]}, ignoring {path}");
+                        logger.LogWarning($"duplicate assembly '{name}': keeping {_dllIndex[name]}, ignoring {path}");
                 }
             }
             catch (Exception e)
             {
                 // one unreadable folder never stops the rest from being read
-                log($"could not read {modDir} for DLLs ({e.GetType().Name}: {e.Message})");
+                logger.LogWarning($"could not read {modDir} for DLLs ({e.GetType().Name}: {e.Message})");
             }
         }
 
-        log($"indexed {_dllIndex.Count} assemblies from {_modDirs.Count} mod folders");
+        logger.LogInformation($"indexed {_dllIndex.Count} assemblies from {_modDirs.Count} mod folders");
     }
 
     /// <summary>
@@ -394,11 +396,10 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
     /// </summary>
     /// <param name="modDir">The root directory of the mod.</param>
     /// <param name="manifest">The manifest specifying the entry script.</param>
-    /// <param name="log">Receives script compilation errors and loading warnings.</param>
     /// <exception cref="FileNotFoundException">
     /// The entry script could not be found at the specified path.
     /// </exception>
-    private void LoadScript(string modDir, ModManifest manifest, Action<string> log)
+    private void LoadScript(string modDir, ModManifest manifest)
     {
         var path = Path.Combine(modDir, manifest.EntryScript!);
         if (!File.Exists(path))
@@ -416,7 +417,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             var result = Convert.ToInt64(godotBridge.Call(script, "reload"));
             if (result != 0)
             {
-                log($"{manifest.Id}: GDScript failed to compile (error {result}), see the game console");
+                logger.LogError($"{manifest.Id}: GDScript failed to compile (error {result}), see the game console");
                 return;
             }
 
@@ -433,7 +434,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             }
             else
             {
-                log($"{manifest.Id}: script loaded but it isn't a Node, so it won't run _ready/_process (use 'extends Node')");
+                logger.LogWarning($"{manifest.Id}: script loaded but it isn't a Node, so it won't run _ready/_process (use 'extends Node')");
             }
         });
     }

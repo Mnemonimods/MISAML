@@ -121,6 +121,11 @@ $rustOut = "target/release"
 Assert-FileExists "$rustOut/misaml-cli.exe"
 Assert-FileExists "$rustOut/misaml_shim.dll"
 
+# removing stale output
+Write-Step "Cleaning old C# output"
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
+    "MISAML/Bootstrap/bin", "MISAML/Bootstrap/obj", "build/csharp"
+
 # Log building C#
 Write-Step "Building C# (dotnet publish -c Release)"
 
@@ -158,8 +163,8 @@ New-Item -ItemType Directory -Force -Path $csharpOut | Out-Null
 # Log merging
 Write-Step "Merging MISAML.Bootstrap.dll"
 
-# Merge ILRepack
 $bootstrapPublish = "MISAML/Bootstrap/bin/Release/net8.0/publish"
+
 Invoke-Native "dotnet" @(
     $ilRepack.FullName,
     "/target:library",
@@ -167,14 +172,18 @@ Invoke-Native "dotnet" @(
     "/out:$csharpOut/MISAML.Bootstrap.dll",
     "$bootstrapPublish/MISAML.Bootstrap.dll",
     "$bootstrapPublish/Tomlyn.dll",
-    "$bootstrapPublish/Semver.dll",
-    "$bootstrapPublish/Microsoft.Extensions.Primitives.dll"
+    "$bootstrapPublish/Semver.dll"
 )
+
+# shared dependencies stay separate DLLs: the shim puts every DLL in MISAML/ on the TPA,
+# so MISAML.dll and MISAML.Bootstrap.dll both resolve the same single copy
+$sharedDeps = Get-ChildItem $bootstrapPublish -Filter "*.dll" |
+        Where-Object { $_.Name -like "Microsoft.Extensions.*" -or $_.Name -like "Serilog*" }
 
 # Merging MISAML.dll with ILRepack
 Write-Step "Merging MISAML.dll"
 $mainPublish = "MISAML/bin/Release/net8.0/publish"
-Invoke-Native "dotnet" @(
+Invoke-Native "dotnet" (
     $ilRepack.FullName,
     "/target:library",
     "/lib:MISAML/vendor",
@@ -201,6 +210,11 @@ Copy-Item "$rustOut/misaml_shim.dll" $distMisaml -Force
 Copy-Item "$csharpOut/MISAML.dll" $distMisaml -Force
 Copy-Item "$csharpOut/MISAML.Bootstrap.dll" $distMisaml -Force
 Copy-Item "$csharpOut/MISAML.GodotAPI.dll" $distMisaml -Force
+
+# Copy shared dependencies next to MISAML.dll
+foreach ($dep in $sharedDeps) {
+    Copy-Item $dep.FullName $distMisaml -Force
+}
 
 Write-Host ""
 Write-Host "Done. Output in: $(Resolve-Path $Dist)" -ForegroundColor Green

@@ -5,7 +5,8 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading;
-using MISAML.Core;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using MISAML.Godot;
 using MISAML.Interfaces;
 
@@ -58,20 +59,9 @@ namespace MISAML.Bootstrap;
 //
 // The bootstrap only does what is described above.
 
-public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startupHook)
+public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startupHook, ILogger<Loader> logger)
 {
     public static Loader? Instance;
-
-    private static readonly string LogPath = Path.Combine(
-        Path.GetDirectoryName(typeof(Loader).Assembly.Location)!,
-        "misaml.log"
-    );
-
-    private static void Log(string message)
-    {
-        var line = $"{_stopwatch.Elapsed.TotalSeconds:F6} [MISAML.Bootstrap] {message}";
-        File.AppendAllText(LogPath, line + "\n");
-    }
 
     // wait to load either of these before init
     private static readonly string[] AssemblyNames = ["GodotSharp", "Mnemonimov"];
@@ -83,22 +73,14 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
     // Called once, directly by the Rust shim via coreclr_create_delegate
     public static void Handoff()
     {
-        File.WriteAllText(LogPath, ""); // clear log
+        var injector = new DependencyInjector();
+        injector.Initialize();
+        AppDomain.CurrentDomain.ProcessExit += (sender, e) => injector.Dispose();
 
-        Log("Starting, waiting for Mnemonimov...");
+        var logger = injector.Services.GetRequiredService<ILogger<Loader>>();
+        logger.LogInformation("Starting, waiting for Mnemonimov...");
 
-        Instance = new Loader(
-            new GodotBridge(),
-            new ModLoader(
-                new GodotBridge(),
-                new Hooks(),
-                new ModSettings(),
-                new VersionReq(),
-                new DependencyResolver(new VersionReq())
-                ),
-            new Core.Core(new GodotBridgePatch())
-        );
-
+        Instance = injector.Services.GetRequiredService<Loader>();
         AppDomain.CurrentDomain.AssemblyLoad += Instance.OnAssemblyLoad;
     }
 
@@ -109,16 +91,16 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
             // Harmony setup runs directly, in Default context, no context
             // switching. Harmony patches VirtualMachine.HandleSystemCall,
             // the 58 bridge methods, all others, etc. etc.
-            Log("calling StartupHook.Initialize() directly...");
+            logger.LogInformation("calling StartupHook.Initialize() directly...");
             startupHook.Initialize();
-            Log("StartupHook.Initialize() returned");
+            logger.LogInformation("StartupHook.Initialize() returned");
 
             // Load MISAML.GodotAPI.dll separately, into the isolated context
             // to interface with the Godot API directly.
             var isolatedContext = AssemblyLoadContext.GetLoadContext(anchorAssembly)
                                   ?? throw new Exception("couldn't get load context for " + anchorAssembly);
 
-            Log($"got isolated context: {isolatedContext.Name}");
+            logger.LogInformation($"got isolated context: {isolatedContext.Name}");
 
             var payloadPath = Path.Combine(
                 Path.GetDirectoryName(typeof(Loader).Assembly.Location)!,
@@ -137,11 +119,11 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
             var baseDir = Path.GetDirectoryName(typeof(Loader).Assembly.Location)!;
             var modsDir = Path.GetFullPath(Path.Combine(baseDir, "..", "mods"));
             modLoader.GameContext = isolatedContext;
-            modLoader.LoadMods(modsDir, Log);
+            modLoader.LoadMods(modsDir);
         }
         catch (Exception e)
         {
-            Log("Start failed: " + e);
+            logger.LogError("Start failed: " + e.Message);
         }
     }
 
@@ -166,7 +148,7 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
 
         AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
 
-        Log($"anchor assembly '{loadedName}' loaded, starting handoff...");
+        logger.LogInformation($"anchor assembly '{loadedName}' loaded, starting handoff...");
         Start(args.LoadedAssembly);
     }
 }

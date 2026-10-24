@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using MISAML.Interfaces;
 
 namespace MISAML.Godot;
@@ -17,9 +19,14 @@ namespace MISAML.Godot;
 // and reach the isolated AssemlyLoadContext. How to find this list:
 //   ilspycmd Mnemonimov.dll -o decompiled_mnemonimov -p
 //   grep -rl "GlobalClass" decompiled_mnemonimov/
-public class GodotBridgePatch : IGodotBridgePatch
+public class GodotBridgePatch() : IGodotBridgePatch
 {
-    private static void Log(string message) => Core.Core.Log(nameof(GodotBridgePatch), message);
+    private static ILogger _logger = NullLogger.Instance;
+
+    public GodotBridgePatch(ILogger<GodotBridgePatch> logger) : this()
+    {
+        _logger = logger;
+    }
 
     private static readonly HashSet<string> SkipNames =
     [
@@ -73,7 +80,7 @@ public class GodotBridgePatch : IGodotBridgePatch
             }
             catch (Exception e)
             {
-                Log($"Failed to locate {typeName}: {e.Message}");
+                _logger.LogWarning($"Failed to locate {typeName}: {e.Message}");
                 continue;
             }
 
@@ -94,13 +101,13 @@ public class GodotBridgePatch : IGodotBridgePatch
                 }
                 catch (Exception e)
                 {
-                    Log($"Failed to patch {typeName}.{method.Name}: {e.GetType().Name}: {e.Message}");
+                    _logger.LogWarning($"Failed to patch {typeName}.{method.Name}: {e.GetType().Name}: {e.Message}");
                     totalFailed++;
                 }
             }
         }
 
-        Log($"complete: {totalPatched} patched across {BridgeTypeNames.Length} types, {totalFailed} failed.");
+        _logger.LogInformation($"complete: {totalPatched} patched across {BridgeTypeNames.Length} types, {totalFailed} failed.");
     }
     private static void BridgePrefix(MethodBase __originalMethod, object[] __args, object __instance)
     {
@@ -111,11 +118,11 @@ public class GodotBridgePatch : IGodotBridgePatch
                 string args = __args is { Length: > 0 }
                     ? string.Join(", ", __args.Select(a => a?.ToString() ?? "null"))
                     : "";
-                Log($"-> {__originalMethod.DeclaringType?.Name}.{__originalMethod.Name}({args})");
+                _logger.LogInformation($"-> {__originalMethod.DeclaringType?.Name}.{__originalMethod.Name}({args})");
             }
             catch (Exception e)
             {
-                Log("prefix logging failed: " + e.GetType().Name);
+                _logger.LogWarning("prefix logging failed: " + e.GetType().Name);
             }
         }
 
@@ -126,7 +133,7 @@ public class GodotBridgePatch : IGodotBridgePatch
         }
         catch (Exception e)
         {
-            Log("OnBridgeInstanceSeen subscriber threw: " + e);
+            _logger.LogWarning("OnBridgeInstanceSeen subscriber threw: " + e.Message);
         }
     }
 
@@ -137,11 +144,11 @@ public class GodotBridgePatch : IGodotBridgePatch
         try
         {
             string result = __result?.ToString() ?? "void";
-            Log($"<- {__originalMethod.DeclaringType?.Name}.{__originalMethod.Name} returned {result}");
+            _logger.LogInformation($"<- {__originalMethod.DeclaringType?.Name}.{__originalMethod.Name} returned {result}");
         }
         catch (Exception e)
         {
-            Log("postfix logging failed: " + e.GetType().Name);
+            _logger.LogWarning("postfix logging failed: " + e.Message);
         }
 
     }

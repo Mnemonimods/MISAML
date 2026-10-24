@@ -10,7 +10,7 @@ public interface IModLoader
     /// </summary>
     /// <param name="modsDir">the directory where all the mods are stored</param>
     /// <param name="log">logger</param>
-    void LoadMods(string modsDir, Action<string> log);
+    void LoadMods(string modsDir);
 
     /// <summary>
     /// Mnemonimov's assembly load context

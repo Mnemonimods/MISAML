@@ -5,6 +5,8 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using HarmonyLib;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using MISAML.Interfaces;
 
 namespace MISAML.Core;
@@ -24,10 +26,14 @@ namespace MISAML.Core;
 /// <summary>
 /// Provides a mod-facing API for lazily patching methods and chaining handlers.
 /// </summary>
-public class Hooks : IHooks
+public class Hooks() : IHooks
 {
-    // setup Log for Hooks
-    private static void Log(string message) => Core.Log(nameof(Hooks), message);
+    private static ILogger _logger = NullLogger.Instance;
+
+    public Hooks(ILogger<Hooks> logger) : this()
+    {
+        _logger = logger;
+    }
 
     // Harmony instance used for all MISAML patches.
     internal static readonly Harmony Harmony = new("MISAML");
@@ -160,7 +166,7 @@ public class Hooks : IHooks
     {
         if (type?.FullName == null)
         {
-            Log($"failed to register '{type}::{methodName}'. a type with a full name is required!");
+            _logger.LogError($"failed to register '{type}::{methodName}'. a type with a full name is required!");
             return false;
         }
 
@@ -204,7 +210,7 @@ public class Hooks : IHooks
     {
         if (string.IsNullOrWhiteSpace(typeName) || string.IsNullOrWhiteSpace(methodName) || handler == null)
         {
-            Log($"failed to register '{typeName}::{methodName}'. type, method and handler are all required!");
+            _logger.LogError($"failed to register '{typeName}::{methodName}'. type, method and handler are all required!");
             return false;
         }
 
@@ -213,7 +219,7 @@ public class Hooks : IHooks
         var (name, signature) = SplitSignature(methodName);
         if (name.Length == 0)
         {
-            Log($"failed to register '{typeName}::{methodName}', the method name is empty!");
+            _logger.LogError($"failed to register '{typeName}::{methodName}', the method name is empty!");
             return false;
         }
 
@@ -241,7 +247,7 @@ public class Hooks : IHooks
             total = next.Length;
         }
 
-        Log($"{label}: successfully registered handler from {owner} (priority {priority}), position {pos} of {total}!");
+        _logger.LogInformation($"{label}: successfully registered handler from {owner} (priority {priority}), position {pos} of {total}!");
 
         EnsurePatched(typeName, name, signature, label);
         return true;
@@ -352,7 +358,7 @@ public class Hooks : IHooks
     /// <param name="methodName">The name of the method to patch.</param>
     /// <param name="signature">The optional parameter type signature used to select an overload.</param>
     /// <param name="patchKey">The unique key identifying the patch.</param>
-    private static void EnsurePatched(string typeName, string methodName, string? signature, string patchKey)
+    private void EnsurePatched(string typeName, string methodName, string? signature, string patchKey)
     {
         // subscribe before searching, so an assembly that loads in between is
         // seen by the listener instead of being ignored/slipping through
@@ -410,7 +416,7 @@ public class Hooks : IHooks
     /// <param name="signature">The optional parameter type signature used to
     /// select an overload.</param>
     /// <returns>The matching methods, or an empty list if none are found.</returns>
-    private static List<MethodInfo> FindMethods(string typeName, string methodName, string? signature)
+    private List<MethodInfo> FindMethods(string typeName, string methodName, string? signature)
     {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
@@ -433,7 +439,7 @@ public class Hooks : IHooks
     /// <param name="signature">The optional parameter type signature used to select 
     /// overloads, "*" matches all overloads.</param>
     /// <returns>The matching methods, or an empty list if none are found.</returns>
-    private static List<MethodInfo> FindMethodsIn(Assembly asm, string typeName, string methodName, string? signature)
+    private List<MethodInfo> FindMethodsIn(Assembly asm, string typeName, string methodName, string? signature)
     {
         var found = new List<MethodInfo>();
 
@@ -454,7 +460,7 @@ public class Hooks : IHooks
             if (signature == null && sameName.Count > 1)
             {
                 var overloads = string.Join(" | ", sameName.Select(m => $"({SignatureOf(m)})"));
-                Log($"{typeName}::{methodName} has several overloads: {overloads}. Use one of those signatures, or {methodName}(*) to hook all of them");
+                _logger.LogError($"{typeName}::{methodName} has several overloads: {overloads}. Use one of those signatures, or {methodName}(*) to hook all of them");
                 return found;
             }
 
@@ -466,13 +472,13 @@ public class Hooks : IHooks
                 // child type it came through
                 if (method.IsStatic && method.DeclaringType != type)
                 {
-                    Log($"{typeName}::{methodName} is a static method declared on {method.DeclaringType?.FullName}, register the handler on that type instead");
+                    _logger.LogError($"{typeName}::{methodName} is a static method declared on {method.DeclaringType?.FullName}, register the handler on that type instead");
                     continue;
                 }
 
                 if (method.IsAbstract || method.IsGenericMethodDefinition)
                 {
-                    Log($"{typeName}::{methodName}({SignatureOf(method)}) is abstract or generic, can't be hooked");
+                    _logger.LogError($"{typeName}::{methodName}({SignatureOf(method)}) is abstract or generic, can't be hooked");
                     continue;
                 }
 
@@ -480,7 +486,7 @@ public class Hooks : IHooks
                 // the game which is obv problematic
                 if (method.DeclaringType == typeof(object))
                 {
-                    Log($"{typeName}::{methodName} is declared on System.Object, refusing to hook it");
+                    _logger.LogError($"{typeName}::{methodName} is declared on System.Object, refusing to hook it");
                     continue;
                 }
 
@@ -492,13 +498,13 @@ public class Hooks : IHooks
             if (signature != null && found.Count == 0 && sameName.Count > 0)
             {
                 var have = string.Join(" | ", sameName.Select(m => $"({SignatureOf(m)})"));
-                Log($"{typeName}::{methodName}({signature}) matches no overload, the ones that exist are: {have}");
+                _logger.LogError($"{typeName}::{methodName}({signature}) matches no overload, the ones that exist are: {have}");
             }
         }
         catch (Exception e)
         {
             // an assembly that can't be searched must never break an assembly load
-            Core.DebugLog($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
+            _logger.LogDebug($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
         }
 
         return found;
@@ -520,7 +526,7 @@ public class Hooks : IHooks
     /// </summary>
     /// <param name="methods">The methods to patch.</param>
     /// <param name="patchKey">The key identifying the patch.</param>
-    private static void ApplyPatches(List<MethodInfo> methods, string patchKey)
+    private void ApplyPatches(List<MethodInfo> methods, string patchKey)
     {
         foreach (var method in methods) ApplyPatch(method, patchKey);
     }
@@ -532,7 +538,7 @@ public class Hooks : IHooks
     /// </summary>
     /// <param name="method">The method to patch.</param>
     /// <param name="patchKey">The key identifying the patch.</param>
-    private static void ApplyPatch(MethodInfo method, string patchKey)
+    private void ApplyPatch(MethodInfo method, string patchKey)
     {
         // another registration already patched this exact method
         if (PatchedMethods.Contains(method.MethodHandle))
@@ -567,11 +573,11 @@ public class Hooks : IHooks
             // mark the target only after harmony patches successfully
             PatchedMethods.Add(method.MethodHandle);
             PatchedKeys.Add(patchKey);
-            Log($"patched {method.DeclaringType?.FullName}::{method.Name}({SignatureOf(method)})");
+            _logger.LogInformation($"patched {method.DeclaringType?.FullName}::{method.Name}({SignatureOf(method)})");
         }
         catch (Exception e)
         {
-            Log($"failed to patch {patchKey}, its handlers will not run: {e.GetType().Name}: {e.Message}");
+            _logger.LogWarning(e, $"failed to patch {patchKey}, its handlers will not run");
         }
     }
 
@@ -646,7 +652,7 @@ public class Hooks : IHooks
             // its own syscall).
             if (Core.DebugEnabled && i < chain.Count - 1)
             {
-                Log($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
+                _logger.LogDebug($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
             }
 
             return result;
@@ -718,7 +724,7 @@ public class Hooks : IHooks
 
         if (!fit)
         {
-            Log($"{original.DeclaringType?.FullName}.{original.Name} returns {returnType.FullName}, but a handler replaced it with {result.Value?.GetType().FullName ?? "null"}, ignoring the replacement");
+            _logger.LogWarning($"{original.DeclaringType?.FullName}.{original.Name} returns {returnType.FullName}, but a handler replaced it with {result.Value?.GetType().FullName ?? "null"}, ignoring the replacement");
             return false;
         }
 
@@ -752,7 +758,7 @@ public class Hooks : IHooks
         catch (Exception e)
         {
             // handler failed, log the error & don't replace the orig, continue
-            Log($"handler from {registration.Owner} for {original.DeclaringType?.FullName}.{original.Name} threw: {e}");
+            _logger.LogWarning(e, $"handler from {registration.Owner} for {original.DeclaringType?.FullName}.{original.Name} threw: {e.Message}");
             return HookResult.Continue();
         }
     }

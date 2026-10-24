@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MISAMl.Bootstrap.Records;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
@@ -64,25 +65,6 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         }
     }
     */
-
-    // parsed version of RawManifest
-    public record ModManifest(
-        string Id,
-        string Name,
-        string Version,
-        string? Description,
-        string? Author,
-        string? Source,
-        string? SourceManifest,
-        string? MisamlVersion,
-        string? EntryAssembly,
-        string? EntryMethod,
-        string? EntryScript,
-        IReadOnlyList<Dependency> Dependencies
-    );
-
-    // a mod folder w/ parsed manifest
-    public record ReadMod(string Dir, ModManifest Manifest);
 
     // match field names ignoring case, so modId and modid both work
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -226,6 +208,8 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
         var candidates = new List<ReadMod>();
 
+        var unavailable = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var (modDir, manifest) in ReadMods(log))
         {
             settings.TryGetValue(manifest.Id, out var setting);
@@ -234,6 +218,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             {
                 _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, false, false, null, manifest.Description));
                 log($"{manifest.Id}: disabled, not loading");
+                unavailable[manifest.Id] = "disabled in misaml.toml";
                 continue;
             }
 
@@ -263,6 +248,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                 {
                     _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, false, problem, manifest.Description));
                     log($"{manifest.Id}: not loading, {problem}");
+                    unavailable[manifest.Id] = problem;
                     continue;
                 }
             }
@@ -277,7 +263,17 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             candidates.Add(new ReadMod(modDir, manifest));
         }
 
-        foreach (var mod in resolver.Resolve(candidates))
+        var result = resolver.Resolve(candidates, unavailable);
+
+        // mods the resolver refused to load
+        foreach (var skipped in result.Skipped)
+        {
+            var m = skipped.Mod.Manifest;
+            _mods.Add(new ModStatus(m.Id, m.Name, m.Version, true, false, skipped.Reason, m.Description));
+            log($"{m.Id}: not loading, {skipped.Reason}");
+        }
+
+        foreach (var mod in result.LoadOrder)
             LoadMod(mod.Dir, mod.Manifest, log);
     }
 

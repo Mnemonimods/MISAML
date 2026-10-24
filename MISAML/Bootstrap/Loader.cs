@@ -93,7 +93,8 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
                 new GodotBridge(),
                 new Hooks(),
                 new ModSettings(),
-                new VersionReq()
+                new VersionReq(),
+                new DependencyResolver()
                 ),
             new Core.Core(new GodotBridgePatch())
         );

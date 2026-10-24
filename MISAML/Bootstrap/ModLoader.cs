@@ -19,7 +19,7 @@ namespace MISAML.Bootstrap;
 //
 // A mod DLL's starting point is named in mod.json by "entryMethod", written as
 // Namespace.Class.Method. The method must be public static with no parameters.
-public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq) : IModLoader
+public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq, IDependencyResolver resolver) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;
@@ -77,11 +77,11 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         string? EntryAssembly,
         string? EntryMethod,
         string? EntryScript,
-        IReadOnlyDictionary<string, string> Dependencies
+        IReadOnlyList<Dependency> Dependencies
     );
     
     // a mod folder w/ parsed manifest
-    private record ReadMod(string Dir, ModManifest Manifest);
+    public record ReadMod(string Dir, ModManifest Manifest);
 
     // match field names ignoring case, so modId and modid both work
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
@@ -95,6 +95,24 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         if (string.IsNullOrEmpty(id))
             throw new Exception("mod.json needs a modId");
 
+        var dependencies = new List<Dependency>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (depId, rawDep) in raw.Dependencies ?? [])
+        {
+            // ids ignore case
+            if (!seen.Add(depId))
+                throw new Exception($"dependencies lists '{depId}' twice");
+            
+            if (string.IsNullOrWhiteSpace(rawDep.Version))
+                throw new Exception($"dependency '{depId}' needs a version");
+
+            var range = versionReq.TryParse(rawDep.Version, out var rangeErr)
+                ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
+
+            dependencies.Add(new Dependency(depId, rawDep.Version, range, rawDep.Source));
+        }
+
         return new ModManifest(
             id,
             raw.ModName ?? id,
@@ -107,10 +125,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             raw.EntryAssembly,
             raw.EntryMethod,
             raw.EntryScript,
-            new Dictionary<string, string>(
-                raw.Dependencies ?? [],
-                StringComparer.OrdinalIgnoreCase
-            )
+            [.. dependencies.OrderBy(d => d.Id, StringComparer.OrdinalIgnoreCase)]
         );
     }
 
@@ -163,6 +178,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             log($"could not read MISAML's own version ('{misamlVer}')");
         }
 
+        var candidates = new List<ReadMod>();
 
         foreach (var (modDir, manifest) in ReadMods(log))
         {
@@ -212,8 +228,11 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                 log($"{manifest.Id}: priority {priority} from misaml.toml");
             }
 
-            LoadMod(modDir, manifest, log);
+            candidates.Add(new ReadMod(modDir, manifest));
         }
+
+        foreach (var mod in resolver.Resolve(candidates))
+            LoadMod(mod.Dir, mod.Manifest, log);
     }
 
     private List<ReadMod> ReadMods(Action<string> log)

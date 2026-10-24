@@ -52,6 +52,7 @@ public class DependencyInjector : IDisposable
         services.AddSingleton<IModLoader, ModLoader>();
         services.AddTransient<IModSettings, ModSettings>();
         services.AddTransient<IVersionReq, VersionReq>();
+        services.AddSingleton<IDependencyResolver, DependencyResolver>();
         services.AddSingleton<Loader>();
         services.AddSingleton<GodotBridgePatch>();
 

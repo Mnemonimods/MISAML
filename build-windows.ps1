@@ -132,10 +132,6 @@ Write-Step "Building C# (dotnet publish -c Release)"
 # Actually build C#
 Invoke-Native "dotnet" @("publish", "-c", "Release")
 
-# ---------------------------------------------------------------------------
-# 4. ILRepack merge
-# ---------------------------------------------------------------------------
-
 # log to check locating ilrepack
 Write-Step "Locating ILRepack"
 
@@ -160,65 +156,71 @@ Write-Host "Using $($ilRepack.FullName)"
 $csharpOut = "build/csharp"
 New-Item -ItemType Directory -Force -Path $csharpOut | Out-Null
 
-# Log merging
-Write-Step "Merging MISAML.Bootstrap.dll"
+# Everything that runs in the Default context goes into a single MISAML.dll
+# MISAML.dll (core) must be listed first, it is the primary assembly, so
+# the output keeps the name "MISAML" and its version attributes (mods and
+# ModLoader both depend on that)
 
 $bootstrapPublish = "MISAML/Bootstrap/bin/Release/net8.0/publish"
-
-Invoke-Native "dotnet" @(
-    $ilRepack.FullName,
-    "/target:library",
-    "/lib:$bootstrapPublish",
-    "/out:$csharpOut/MISAML.Bootstrap.dll",
-    "$bootstrapPublish/MISAML.Bootstrap.dll",
-    "$bootstrapPublish/Tomlyn.dll",
-    "$bootstrapPublish/Semver.dll"
-)
-
-# shared dependencies stay separate DLLs: the shim puts every DLL in MISAML/ on the TPA,
-# so MISAML.dll and MISAML.Bootstrap.dll both resolve the same single copy
-$sharedDeps = Get-ChildItem $bootstrapPublish -Filter "*.dll" |
-        Where-Object { $_.Name -like "Microsoft.Extensions.*" -or $_.Name -like "Serilog*" }
-
-# Merging MISAML.dll with ILRepack
-Write-Step "Merging MISAML.dll"
 $mainPublish = "MISAML/bin/Release/net8.0/publish"
-Invoke-Native "dotnet" (
-    $ilRepack.FullName,
-    "/target:library",
-    "/lib:MISAML/vendor",
-    "/out:$csharpOut/MISAML.dll",
+
+$inputs = @(
     "$mainPublish/MISAML.dll",
+    "$bootstrapPublish/MISAML.Bootstrap.dll",
     "$mainPublish/0Harmony.dll"
 )
+
+$deps = @(
+    "Tomlyn", 
+    "Semver",
+    "Microsoft.Extensions.DependencyInjection",
+    "Microsoft.Extensions.DependencyInjection.Abstractions",
+    "Microsoft.Extensions.Logging",
+    "Microsoft.Extensions.Logging.Abstractions",
+    "Microsoft.Extensions.Options",
+    "Microsoft.Extensions.Primitives",
+    "Serilog",
+    "Serilog.Extensions.Logging",
+    "Serilog.Sinks.Console",
+    "Serilog.Sinks.File"  
+)
+foreach ($dep in $deps) {
+    $path = "$bootstrapPublish/$dep.dll"
+    Assert-FileExists $path
+    $inputs += $path
+}
+
+$libs = @("/lib:$bootstrapPublish", "/lib:MISAML/vendor")
+$f2 = Get-ChildItem (Join-Path $Dist "MISAML/runtime/shared/Microsoft.NETCore.App") -Directory -ErrorAction SilentlyContinue |
+    Select-Object -Last 1
+if ($fw) { $libs += "/lib:$($f2.FullName)"}
+
+Invoke-Native "dotnet" (@($ilRepack.FullName, "/target:library") + $libs + @("/out:$csharpOut/MISAML.dll") + $inputs)
 
 # Copy MISAML.GodotAPI.dll to dist
 Write-Step "Copying MISAML.GodotAPI.dll"
 $godotApiDll = "MISAML/GodotAPI/bin/Release/net8.0/publish/MISAML.GodotAPI.dll"
 Assert-FileExists $godotApiDll
 Copy-Item $godotApiDll $csharpOut -Force
-
+ 
 Write-Step "Assembling $Dist"
-
+ 
 # Dist directory
 $distMisaml = Join-Path $Dist "MISAML"
 New-Item -ItemType Directory -Force -Path $distMisaml | Out-Null
-
+ 
+# Old loose dependency dlls from earlier builds
+Remove-Item (Join-Path $distMisaml "*.dll") -Force -ErrorAction SilentlyContinue
+ 
 # Copy all files into dist
 Copy-Item "$rustOut/misaml-cli.exe" $Dist -Force
 Copy-Item "$rustOut/misaml_shim.dll" $distMisaml -Force
 Copy-Item "$csharpOut/MISAML.dll" $distMisaml -Force
-Copy-Item "$csharpOut/MISAML.Bootstrap.dll" $distMisaml -Force
 Copy-Item "$csharpOut/MISAML.GodotAPI.dll" $distMisaml -Force
-
-# Copy shared dependencies next to MISAML.dll
-foreach ($dep in $sharedDeps) {
-    Copy-Item $dep.FullName $distMisaml -Force
-}
-
+ 
 Write-Host ""
 Write-Host "Done. Output in: $(Resolve-Path $Dist)" -ForegroundColor Green
-
+ 
 # Optional run argument to start the game
 if ($Run) {
     Write-Step "Starting misaml-cli"

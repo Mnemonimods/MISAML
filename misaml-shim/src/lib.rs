@@ -257,7 +257,7 @@ fn bootstrap_managed(host_handle: *mut c_void, domain_id: c_uint) -> bool {
         create_delegate(
             host_handle,
             domain_id,
-            c"MISAML.Bootstrap".as_ptr(),
+            c"MISAML".as_ptr(),
             c"MISAML.Bootstrap.Loader".as_ptr(),
             c"Handoff".as_ptr(),
             &mut delegate_ptr,

@@ -13,20 +13,7 @@ BOOTSTRAP_PUBLISH="MISAML/Bootstrap/bin/Release/net8.0/publish"
 GODOTAPI_PUBLISH="MISAML/GodotAPI/bin/Release/net8.0/publish"
 
 CSHARP_OUT="build/csharp"
-CSHARP_DLLS=(MISAML.dll MISAML.Bootstrap.dll MISAML.GodotAPI.dll)
-
-SHARED_DLLS=(
-    Microsoft.Extensions.DependencyInjection.dll
-    Microsoft.Extensions.DependencyInjection.Abstractions.dll
-    Microsoft.Extensions.Logging.dll
-    Microsoft.Extensions.Logging.Abstractions.dll
-    Microsoft.Extensions.Options.dll
-    Microsoft.Extensions.Primitives.dll
-    Serilog.dll
-    Serilog.Extensions.Logging.dll
-    Serilog.Sinks.Console.dll
-    Serilog.Sinks.File.dll
-)
+CSHARP_DLLS=(MISAML.dll MISAML.GodotAPI.dll)
 
 DOTNET_ARGS=()
 
@@ -64,22 +51,43 @@ compile_csharp() {
     mkdir -p "$CSHARP_OUT"
     cp "$GODOTAPI_PUBLISH/MISAML.GodotAPI.dll" "$CSHARP_OUT/"
 
-    log "Merging Tomlyn and Semver into MISAML.Bootstrap.dll..."
-    dotnet "$ilrepack" \
-        /target:library \
-        /lib:"$BOOTSTRAP_PUBLISH" \
-        /out:"$CSHARP_OUT/MISAML.Bootstrap.dll" \
-        "$BOOTSTRAP_PUBLISH/MISAML.Bootstrap.dll" \
-        "$BOOTSTRAP_PUBLISH/Tomlyn.dll" \
-        "$BOOTSTRAP_PUBLISH/Semver.dll"
-
-    log "Merging 0Harmony.dll into MISAML.dll..."
-    dotnet "$ilrepack" \
-        /target:library \
-        /lib:MISAML/vendor \
-        /out:"$CSHARP_OUT/MISAML.dll" \
-        "$CORE_PUBLISH/MISAML.dll" \
+    # Everything that runs in the Default context goes into a single MISAML.dll
+    # MISAML.dll (core) must be listed first, it is the primary assembly, so
+    # the output keeps the name "MISAML" and its version attributes (mods and
+    # ModLoader both depend on that)
+    local inputs=(
+        "$CORE_PUBLISH/MISAML.dll"
+        "$BOOTSTRAP_PUBLISH/MISAML.Bootstrap.dll"
         "$CORE_PUBLISH/0Harmony.dll"
+    )
+    local dep
+    for dep in Tomlyn Semver \
+        Microsoft.Extensions.DependencyInjection \
+        Microsoft.Extensions.DependencyInjection.Abstractions \
+        Microsoft.Extensions.Logging \
+        Microsoft.Extensions.Logging.Abstractions \
+        Microsoft.Extensions.Options \
+        Microsoft.Extensions.Primitives \
+        Serilog \
+        Serilog.Extensions.Logging \
+        Serilog.Sinks.Console \
+        Serilog.Sinks.File; do
+        need_files "$BOOTSTRAP_PUBLISH/$dep.dll"
+        inputs+=("$BOOTSTRAP_PUBLISH/$dep.dll")
+    done
+    need_files "${inputs[@]}"
+
+    local libs=(/lib:"$BOOTSTRAP_PUBLISH" /lib:MISAML/vendor)
+    local fw
+    fw=$(ls -d dist/MISAML/runtime/shared/Microsoft.NETCore.App/*/ 2>/dev/null | tail -1 || true)
+    [ -z "$fw" ] || libs+=(/lib:"$fw")
+
+    log "Merging everything into MISAML.dll..."
+    dotnet "$ilrepack" \
+        /target:library \
+        "${libs[@]}" \
+        /out:"$CSHARP_OUT/MISAML.dll" \
+        "${inputs[@]}"
 
     for dll in "${CSHARP_DLLS[@]}"; do
         need_files "$CSHARP_OUT/$dll"
@@ -97,12 +105,9 @@ stage() {
     mkdir -p dist/MISAML
     cp "$LINUX_CLI" dist/
     cp "$LINUX_SHIM" dist/MISAML/
+    rm -f dist/MISAML/*.dll
     for dll in "${CSHARP_DLLS[@]}"; do
         cp "$CSHARP_OUT/$dll" dist/MISAML/
-    done
-    for dll in "${SHARED_DLLS[@]}"; do
-        need_files "$BOOTSTRAP_PUBLISH/$dll"
-        cp "$BOOTSTRAP_PUBLISH/$dll" dist/MISAML/
     done
 }
 

@@ -28,17 +28,19 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
                 if (problem == null) continue;
 
                 alive.Remove(mod.Manifest.Id);
-                gone[mod.Manifest.Id] = "not loading";
+                gone[mod.Manifest.Id] = problem;
                 skipped.Add(new SkippedMod(mod, problem));
                 changed = true;
             }
         } while (changed);
 
         var loadOrder = Order(alive);
-
-        // anything Order cannot pass is cyclical (or needs a mod that is cyclical)
-        foreach (var mod in alive.Values.Where(m => !loadOrder.Contains(m)))
-            skipped.Add(new SkippedMod(mod, "part of a dependency cycle, or needs a mod that is"));
+        var stuck = alive.Values
+            .Where(m => !loadOrder.Contains(m))
+            .ToDictionary(m => m.Manifest.Id, StringComparer.OrdinalIgnoreCase);
+            
+        foreach (var mod in stuck.Values)
+            skipped.Add(new SkippedMod(mod, CycleReason(mod, stuck)));
 
         return new ResolveResult(loadOrder, skipped);
     }
@@ -48,26 +50,35 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
         Dictionary<string, ReadMod> alive,
         IReadOnlyDictionary<string, string> unavailable)
     {
+        var problems = new List<string>();
+
         foreach (var dep in mod.Manifest.Dependencies)
         {
+            // only used when the dependency has a source
+            var hint = dep.Source == null ? "" : $". Get it from {dep.Source}";
+
             // dependency isn't alive
             if (!alive.TryGetValue(dep.Id, out var depMod))
             {
                 if (unavailable.TryGetValue(dep.Id, out var why))
-                    return $"needs {dep.Id}, which is {why}";
+                    problems.Add($"needs {dep.Id}, which was skipped: {why}");
+                else if (dep.Source == null)
+                    problems.Add($"needs {dep.Id} {dep.RawRange}, which isn't installed (install manually)");
+                else
+                    problems.Add($"needs {dep.Id} {dep.RawRange}, which isn't installed{hint}");
 
-                return dep.Source == null
-                    ? $"needs {dep.Id} {dep.RawRange}, which isn't installed (install manually)"
-                    : $"needs {dep.Id} {dep.RawRange}, which isn't installed. Get it from {dep.Source}";
+                continue; 
             }
 
             // dependency is alive but version is out of range
             var depVer = versionReq.ParseVersion(depMod.Manifest.Version);
-            if (depVer == null || !dep.Range.Contains(depVer))
-                return $"needs {dep.Id} {dep.RawRange}, found {depMod.Manifest.Version}";
+            if (depVer == null)
+                problems.Add($"needs {dep.Id} {dep.RawRange}, but its version '{depMod.Manifest.Version}' isn't semantically versioned.");
+            else if (!dep.Range.Contains(depVer))
+                problems.Add($"needs {dep.Id} {dep.RawRange}, but {depMod.Manifest.Version} is installed{hint}");
         }
 
-        return null;
+        return problems.Count == 0 ? null : string.Join("; ", problems);
     }
 
     // deps first, ties broken by id so the order is same every run
@@ -93,25 +104,35 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
             }
         }
 
-        // mods with nothing left to wait, smallest id first
-        var ready = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        // mods with nothing left to wait for, lowest priority number first, then id
+        var ready = new SortedSet<ReadMod>(Comparer<ReadMod>.Create((a, b) =>
+        {
+            var byPriority = a.Priority.CompareTo(b.Priority);
+            
+            return byPriority != 0
+                ? byPriority
+                : string.Compare(a.Manifest.Id, b.Manifest.Id, StringComparison.OrdinalIgnoreCase);
+        }));
+
         foreach (var (id, count) in waiting)
         {
-            if (count == 0) ready.Add(id);
+            if (count == 0) ready.Add(alive[id]);
         }
 
         var order = new List<ReadMod>();
+
         while (ready.Count > 0)
         {
-            var id = ready.Min!;
-            ready.Remove(id);
-            order.Add(alive[id]);
+            var mod = ready.Min!;
+            ready.Remove(mod);
+            order.Add(mod);
 
-            if (!dependents.TryGetValue(id, out var needers)) continue;
+            if (!dependents.TryGetValue(mod.Manifest.Id, out var needers)) continue;
+
             foreach (var needer in needers)
             {
                 if (--waiting[needer.Manifest.Id] == 0)
-                    ready.Add(needer.Manifest.Id);
+                    ready.Add(needer);
             }
         }
 

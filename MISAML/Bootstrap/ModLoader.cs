@@ -206,7 +206,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
         var unavailable = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (modDir, manifest) in ReadMods())
+        foreach (var (modDir, manifest, _) in ReadMods())
         {
             settings.TryGetValue(manifest.Id, out var setting);
 
@@ -256,7 +256,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                 logger.LogInformation($"{manifest.Id}: priority {priority} from misaml.toml");
             }
 
-            candidates.Add(new ReadMod(modDir, manifest));
+            candidates.Add(new ReadMod(modDir, manifest, setting?.Priority ?? Hooks.DefaultPriority));
         }
 
         var result = resolver.Resolve(candidates, unavailable);
@@ -273,25 +273,25 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         _dllIndex.Clear();
         BuildDllIdx([.. result.LoadOrder.Select(m => m.Dir)]);
 
-        var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var failed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var mod in result.LoadOrder)
         {
             var m = mod.Manifest;
 
             // deps come first in LoadOrder, so it's already known if each one worked
-            var broken = m.Dependencies.FirstOrDefault(d => failed.Contains(d.Id));
+            var broken = m.Dependencies.FirstOrDefault(d => failed.ContainsKey(d.Id));
             if (broken != null)
             {
-                var reason = $"needs {broken.Id}, which failed to load";
+                var reason = $"needs {broken.Id}, which failed to load: {failed[broken.Id]}";
                 _mods.Add(new ModStatus(m.Id, m.Name, m.Version, true, false, reason, m.Description));
                 logger.LogWarning($"{m.Id}: not loading, {reason}");
-                failed.Add(m.Id);
+                failed[m.Id] = reason;
                 continue;
             }
 
-            if (!LoadMod(mod.Dir, m))
-                failed.Add(m.Id);
+            var err = LoadMod(mod.Dir, m);
+            if (err != null) failed[m.Id] = err;
         }
 
         var loaded = _mods.Count(s => s.Loaded);
@@ -340,7 +340,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         return result;
     }
 
-    private bool LoadMod(string modDir, ModManifest manifest)
+    private string? LoadMod(string modDir, ModManifest manifest)
     {
         // a mod is a dll (entryAssembly), a GDScript (script), or both
         string? err = null;
@@ -369,7 +369,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
         _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
         logger.LogInformation(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
-        return err == null;
+        return err;
     }
 
     /// <summary>

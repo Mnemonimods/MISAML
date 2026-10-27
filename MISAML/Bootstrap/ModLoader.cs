@@ -393,7 +393,15 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
                     var name = Path.GetFileNameWithoutExtension(path);
 
                     if (!_dllIndex.TryAdd(name, path))
-                        logger.LogWarning($"duplicate assembly '{name}': keeping {_dllIndex[name]}, ignoring {path}");
+                    {
+                        var kept = _dllIndex[name];
+                        var keptVer = VersionOf(kept);
+                        var otherVer = VersionOf(path);
+
+                        logger.LogWarning(keptVer != null && otherVer != null && keptVer != otherVer
+                            ? $"assembly '{name}' exists in two versions ({keptVer} in {kept} & {otherVer} in {path}), using {keptVer}. A mod built against {otherVer} may break"
+                            : $"duplicate assembly '{name}': keeping {kept}, ignoring {path}");
+                    }
                 }
             }
             catch (Exception e)
@@ -407,6 +415,17 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
     }
 
     /// <summary>
+    /// Gets the version of an assembly from its file metadata
+    /// </summary>
+    /// <param name="path">The path to the assembly file.</param>
+    /// <returns>The assembly's version, or <see langword="null"/> if the version cannot be retrieved.</returns>
+    private static Version? VersionOf(string path)
+    {
+        try { return AssemblyName.GetAssemblyName(path).Version; }
+        catch (Exception) { return null; }
+    }
+
+    /// <summary>
     /// Determines whether a DLL is located inside a build output directory, which
     /// should be excluded from assembly discovery.
     /// </summary>
@@ -415,10 +434,26 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
     /// <returns><see langword="true"/> if the DLL is inside an <c>obj</c>
     /// directory, otherwise, <see langword="false"/>.</returns>
     protected virtual bool IsBuildOutput(string modDir, string path)
-        => Path.GetRelativePath(modDir, path)
+    {
+        var parts = Path.GetRelativePath(modDir, path)
             .Split(Path.DirectorySeparatorChar)
             .SkipLast(1)
-            .Any(part => part.Equals("obj", StringComparison.OrdinalIgnoreCase));
+            .ToArray();
+
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (parts[i].Equals("obj", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (parts[i].Equals("bin", StringComparison.OrdinalIgnoreCase)
+                && i + 1 < parts.Length
+                && (parts[i + 1].Equals("Debug", StringComparison.OrdinalIgnoreCase)
+                    || parts[i + 1].Equals("Release", StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Loads the mod's entry assembly and invokes the method specified by

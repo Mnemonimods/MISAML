@@ -21,7 +21,16 @@ namespace MISAML.Bootstrap;
 //
 // A mod DLL's starting point is named in mod.json by "entryMethod", written as
 // Namespace.Class.Method. The method must be public static with no parameters.
-public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modSettings, IVersionReq versionReq, IDependencyResolver resolver, ILogger<ModLoader> logger) : IModLoader
+public class ModLoader(
+    IGodotBridge godotBridge,
+    IHooks hooks,
+    IModSettings modSettings,
+    IVersionReq versionReq,
+    IDependencyResolver resolver,
+    IIdScanner idScanner,
+    IIdRegistry idRegistry,
+    IIdWriter idWriter,
+    ILogger<ModLoader> logger) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
     public static IReadOnlyList<ModStatus> Mods => _mods;
@@ -302,6 +311,23 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         var disabled = _mods.Count(s => !s.Enabled);
 
         logger.LogInformation($"{loaded} of {_mods.Count} mods loaded ({notLoaded} not loaded, {disabled} disabled)");
+
+        //TODO: remove this debug shit.
+        idRegistry.RegisterSyscall("SYS_MISAML_TEST", vm => logger.LogInformation("test syscall ran"));
+        idRegistry.RegisterConstant("MISAML_TEST_CONST", 1234L);
+
+        godotBridge.OnReady(AllocateIds);
+    }
+
+    // runs once, after every mod has loaded and registered, gives each registered
+    // word its numbers and writes them into the game
+    private void AllocateIds()
+    {
+        var used = idScanner.Scan();
+        var spaces = used.Numbers.Select(n => $"{n.Key} {n.Value.Count} (highest {n.Value.DefaultIfEmpty(-1).Max()})");
+        logger.LogInformation($"assembler uses {string.Join(", ", spaces)}, {used.Words.Count} words");
+
+        idWriter.Apply(idRegistry.Allocate(used));
     }
 
     // the modId from a manifest that failed to parse, null if it cannot be read

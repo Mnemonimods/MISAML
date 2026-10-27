@@ -63,6 +63,11 @@ public class DependencyInjector : IDisposable
         services.AddSingleton<IMnemonimov, Mnemonimov>();
         services.AddSingleton<IAsm, Asm>();
 
+        // idk where to put this lol
+        services.AddSingleton<IIdScanner, IdScanner>();
+        services.AddSingleton<IIdRegistry, IdRegistry>();
+        services.AddSingleton<IIdWriter, IdWriter>();
+
         Services = services.BuildServiceProvider();
     }
 

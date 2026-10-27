@@ -38,7 +38,7 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
         var stuck = alive.Values
             .Where(m => !loadOrder.Contains(m))
             .ToDictionary(m => m.Manifest.Id, StringComparer.OrdinalIgnoreCase);
-            
+
         foreach (var mod in stuck.Values)
             skipped.Add(new SkippedMod(mod, CycleReason(mod, stuck)));
 
@@ -67,7 +67,7 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
                 else
                     problems.Add($"requires {dep.Id} {dep.RawRange}, which isn't installed{hint}");
 
-                continue; 
+                continue;
             }
 
             // dependency is alive but version is out of range
@@ -108,7 +108,7 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
         var ready = new SortedSet<ReadMod>(Comparer<ReadMod>.Create((a, b) =>
         {
             var byPriority = a.Priority.CompareTo(b.Priority);
-            
+
             return byPriority != 0
                 ? byPriority
                 : string.Compare(a.Manifest.Id, b.Manifest.Id, StringComparison.OrdinalIgnoreCase);

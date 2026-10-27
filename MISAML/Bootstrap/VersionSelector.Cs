@@ -27,13 +27,13 @@ public class VersionSelector(IVersionReq versionReq) : IVersionSelector
             // a verison in misaml.toml narrows chocie
             if (candidates.Count > 1
                 && settings.TryGetValue(group.Key, out var setting)
-                && setting.Version is { } pin 
+                && setting.Version is { } pin
                 && versionReq.TryParse(pin, out _) is { } range)
             {
                 var matching = candidates
                     .Where(c => versionReq.ParseVersion(c.Manifest.Version) is { } v && range.Contains(v))
                     .ToList();
-                
+
                 // nothing matches, keep them all, so pin check reports
                 if (matching.Count > 0) candidates = matching;
             }

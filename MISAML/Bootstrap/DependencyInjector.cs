@@ -67,8 +67,13 @@ public class DependencyInjector : IDisposable
         services.AddSingleton<IIdScanner, IdScanner>();
         services.AddSingleton<IIdRegistry, IdRegistry>();
         services.AddSingleton<IIdWriter, IdWriter>();
+        services.AddSingleton<IIds, Ids>();
 
         Services = services.BuildServiceProvider();
+
+        // nothing asks for/uses IIds, but building it is what hands
+        // mods the reg and it has to exist before any mods load
+        Services.GetRequiredService<IIds>();
     }
 
     public void Dispose() => Services?.Dispose();

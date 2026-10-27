@@ -30,6 +30,7 @@ public class ModLoader(
     IIdScanner idScanner,
     IIdRegistry idRegistry,
     IIdWriter idWriter,
+    IIds ids,
     ILogger<ModLoader> logger) : IModLoader
 {
     // populated once by LoadMods(), read-only "snapshot" I suppose.
@@ -163,6 +164,8 @@ public class ModLoader(
 
     public void LoadMods(string modsDir)
     {
+        _ = ids;
+
         if (!Directory.Exists(modsDir))
         {
             logger.LogWarning($"no mods directory at {modsDir}, skipping");

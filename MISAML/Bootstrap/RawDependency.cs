@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 
 namespace MISAML.Bootstrap;
 
+[JsonConverter(typeof(RawDependencyConverter))]
 public class RawDependency
 {
     public string? Version { get; set; }

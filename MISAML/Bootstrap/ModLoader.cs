@@ -117,11 +117,9 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
             foreach (var key in rawDep.UnknownKeys)
             {
-                var reason = key.Equals("sourceManifest", StringComparison.OrdinalIgnoreCase)
-                    ? "sourceManifest is not supported yet" //TODO: please.
-                    : "unknown key";
-
-                logger.LogWarning($"{id}: dependency '{depId}': {reason} '{key}', ignoring it");
+                logger.LogWarning(key.Equals("sourceManifest", StringComparison.OrdinalIgnoreCase)
+                    ? $"{id}: dependency '{depId}': sourceManifest is unused on dependencies, ignoring it"
+                    : $"{id}: dependency '{depId}': unknown key '{key}', ignoring it");
             }
 
             if (string.IsNullOrWhiteSpace(rawDep.Version))

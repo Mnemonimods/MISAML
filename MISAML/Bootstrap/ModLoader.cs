@@ -312,10 +312,6 @@ public class ModLoader(
 
         logger.LogInformation($"{loaded} of {_mods.Count} mods loaded ({notLoaded} not loaded, {disabled} disabled)");
 
-        //TODO: remove this debug shit.
-        idRegistry.RegisterSyscall("SYS_MISAML_TEST", vm => logger.LogInformation("test syscall ran"));
-        idRegistry.RegisterConstant("MISAML_TEST_CONST", 1234L);
-
         godotBridge.OnReady(AllocateIds);
     }
 

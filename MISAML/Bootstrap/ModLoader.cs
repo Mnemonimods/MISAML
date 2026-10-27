@@ -201,10 +201,15 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         }
 
         var candidates = new List<ReadMod>();
-
         var unavailable = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var invalid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var read = ReadMods(invalid);
 
-        foreach (var (modDir, manifest, _) in ReadMods())
+        // a dep on a mod that is installed but broken
+        foreach (var (badId, why) in invalid)
+            unavailable.TryAdd(badId, why);
+
+        foreach (var (modDir, manifest, _) in read)
         {
             settings.TryGetValue(manifest.Id, out var setting);
 
@@ -299,7 +304,30 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         logger.LogInformation($"{loaded} of {_mods.Count} mods loaded ({notLoaded} not loaded, {disabled} disabled)");
     }
 
-    private List<ReadMod> ReadMods()
+    // the modId from a manifest that failed to parse, null if it cannot be read
+    private static string? TryReadId(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (property.Name.Equals("modId", StringComparison.OrdinalIgnoreCase)
+                    && property.Value.ValueKind == JsonValueKind.String)
+                {
+                    var id = property.Value.GetString()?.Trim();
+                    return string.IsNullOrEmpty(id) ? null : id;
+                }
+            }
+        }
+        catch (JsonException) { }
+
+        return null;
+    }
+
+    private List<ReadMod> ReadMods(Dictionary<string, string> invalid)
     {
         var result = new List<ReadMod>();
 
@@ -312,17 +340,26 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             if (!File.Exists(manifestPath))
             {
                 logger.LogWarning($"skipping {modDir}: no mod manifest");
+                invalid.TryAdd(Path.GetFileName(modDir), "has no mod.json");
                 continue;
             }
 
+            string? json = null;
             ModManifest manifest;
             try
             {
-                manifest = ParseManifest(File.ReadAllText(manifestPath));
+                json = File.ReadAllText(manifestPath);
+                manifest = ParseManifest(json);
             }
             catch (Exception e)
             {
                 logger.LogWarning($"skipping {modDir}: invalid mod manifest ({e.GetType().Name}: {e.Message})");
+
+                // if the id cannot be read, the folder name is best guess
+                var badId = (json == null ? null : TryReadId(json)) ?? Path.GetFileName(modDir);
+
+                invalid.TryAdd(badId, $"invalid mod manifest ({e.Message})");
+
                 continue;
             }
 

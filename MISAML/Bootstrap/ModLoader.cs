@@ -77,16 +77,16 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         if (!Uri.TryCreate(source.Trim(), UriKind.Absolute, out var uri)
             || uri.Scheme != Uri.UriSchemeHttps
             || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
-            throw new Exception($"dependency '{depId}' has a bad source '{source}'");
+            throw new Exception($"dependency '{depId}' has an invalid source '{source}'");
 
         var path = uri.AbsolutePath.Trim('/');
         if (path.EndsWith(".git")) path = path[..^4];
 
         if (path.Split('/').Length != 2)
-            throw new Exception($"dependency '{depId}' has a bad source '{source}'");
+            throw new Exception($"dependency '{depId}' has an invalid source '{source}'");
 
         if (path.Split('/').Any(string.IsNullOrEmpty))
-            throw new Exception($"dependency '{depId}' has a bad source '{source}'");
+            throw new Exception($"dependency '{depId}' has an invalid source '{source}'");
 
         return $"https://github.com/{path}";
     }
@@ -98,7 +98,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
 
         var id = raw.ModId?.Trim();
         if (string.IsNullOrEmpty(id))
-            throw new Exception("mod.json needs a modId");
+            throw new Exception("mod.json requires a modId");
 
         if (!IdPattern.IsMatch(id))
             throw new Exception($"modId '{id}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
@@ -123,7 +123,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             }
 
             if (string.IsNullOrWhiteSpace(rawDep.Version))
-                throw new Exception($"dependency '{depId}' needs a version");
+                throw new Exception($"dependency '{depId}' requires a version");
 
             var range = versionReq.TryParse(rawDep.Version, out var rangeErr)
                         ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
@@ -281,7 +281,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             var broken = m.Dependencies.FirstOrDefault(d => failed.ContainsKey(d.Id));
             if (broken != null)
             {
-                var reason = $"needs {broken.Id}, which failed to load: {failed[broken.Id]}";
+                var reason = $"requires {broken.Id}, which failed to load: {failed[broken.Id]}";
                 _mods.Add(new ModStatus(m.Id, m.Name, m.Version, true, false, reason, m.Description));
                 logger.LogWarning($"{m.Id}: not loading, {reason}");
                 failed[m.Id] = reason;
@@ -322,7 +322,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             }
             catch (Exception e)
             {
-                logger.LogWarning($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
+                logger.LogWarning($"skipping {modDir}: invalid mod manifest ({e.GetType().Name}: {e.Message})");
                 continue;
             }
 
@@ -346,7 +346,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         try
         {
             if (manifest.EntryAssembly == null && manifest.EntryScript == null)
-                throw new Exception("mod manifest requires an entry assembly or script!");
+                throw new Exception("mod manifest requires an entry assembly or script");
 
 
             // everything the mod registers while this block runs is owned
@@ -441,7 +441,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
 
         if (manifest.EntryMethod == null)
-            throw new Exception("entryAssembly needs entryMethod in mod.json (Hint: Namespace.Class.Method)");
+            throw new Exception("entryAssembly requires entryMethod in mod.json (Hint: Namespace.Class.Method)");
 
         // split at the last dot, before it is the class, after it's the method
         var split = manifest.EntryMethod.LastIndexOf('.');

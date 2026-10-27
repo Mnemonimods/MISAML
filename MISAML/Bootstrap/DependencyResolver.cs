@@ -61,11 +61,11 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
             if (!alive.TryGetValue(dep.Id, out var depMod))
             {
                 if (unavailable.TryGetValue(dep.Id, out var why))
-                    problems.Add($"needs {dep.Id}, which was skipped: {why}");
+                    problems.Add($"requires {dep.Id}, which was skipped: {why}");
                 else if (dep.Source == null)
-                    problems.Add($"needs {dep.Id} {dep.RawRange}, which isn't installed (install manually)");
+                    problems.Add($"requires {dep.Id} {dep.RawRange}, which isn't installed (install manually)");
                 else
-                    problems.Add($"needs {dep.Id} {dep.RawRange}, which isn't installed{hint}");
+                    problems.Add($"requires {dep.Id} {dep.RawRange}, which isn't installed{hint}");
 
                 continue; 
             }
@@ -73,9 +73,9 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
             // dependency is alive but version is out of range
             var depVer = versionReq.ParseVersion(depMod.Manifest.Version);
             if (depVer == null)
-                problems.Add($"needs {dep.Id} {dep.RawRange}, but its version '{depMod.Manifest.Version}' isn't semantically versioned.");
+                problems.Add($"requires {dep.Id} {dep.RawRange}, but its version '{depMod.Manifest.Version}' is not valid semantic versioning.");
             else if (!dep.Range.Contains(depVer))
-                problems.Add($"needs {dep.Id} {dep.RawRange}, but {depMod.Manifest.Version} is installed{hint}");
+                problems.Add($"requires {dep.Id} {dep.RawRange}, but {depMod.Manifest.Version} is installed{hint}");
         }
 
         return problems.Count == 0 ? null : string.Join("; ", problems);
@@ -153,9 +153,9 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
             if (seenAt == 0)
                 return $"dependency cycle: {string.Join(" -> ", path.Append(id))}";
 
-            // looped somewhere further along, start just needs a mod that is in a cycle
+            // looped somewhere further along, start just requires a mod that is in a cycle
             if (seenAt > 0)
-                return $"needs {path[1]}, which can't load because of a dependency cycle";
+                return $"requires {path[1]}, which can't load because of a dependency cycle";
 
             path.Add(id);
             var next = current.Manifest.Dependencies.First(d => stuck.ContainsKey(d.Id));

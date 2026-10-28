@@ -8,18 +8,28 @@ using MISAML.Interfaces;
 
 namespace MISAML.Core;
 
-// mods ask for a word by name while loading (syscall or token), numbers are 
-// given out later in one pass (Allocate), once every request is in, so a 
-// mod's hard coded numbers are already in the game's maps and get skipped
+/// <summary>
+/// Mods ask for a word by name while loading (syscall or token), numbers are
+/// given out later in one pass (Allocate), once every request is in, so a mod's
+/// hard-coded numbers are already in the game's maps and get skipped.
+/// </summary>
 public class IdRegistry(ILogger<IdRegistry> logger) : IIdRegistry
 {
     private readonly object _lock = new();
 
-    // one registered word
+    /// <summary>
+    /// A single registered word.
+    /// </summary>
+    /// <param name="Kind">The kind of the word, a syscall, or a plain constant token.</param>
+    /// <param name="Handler">The syscall's handler, or null for a token with no syscall.</param>
+    /// <param name="Value">The constant's value (long or float boxed as object), or null for a syscall.</param>
     private record Request(IdKind Kind, Action<object>? Handler, object? Value);
 
-    // word -> handler, null handler means token w/ no syscall, case-insensitive
-    // as the assembler ignores case in words
+    // OrdinalIgnoreCase on purpose: the lexer is case sensitive, but the game
+    // reserves look-alike words (TRUE/true)
+    /// <summary>
+    /// Registered words
+    /// </summary>
     private readonly Dictionary<string, Request> _requests
         = new(StringComparer.OrdinalIgnoreCase);
 
@@ -28,10 +38,14 @@ public class IdRegistry(ILogger<IdRegistry> logger) : IIdRegistry
 
     private bool _closed;
 
-    // the highest number a space can hold, Syscall codes are 2 bytes in the
-    // bytecode, opcodes, conditions and data types are 1 byte, Registers are 
-    // null: a register is a 1 byte index into the VM's register array, so 
-    // adding one means resizing that array, not just taking a number
+    /// <summary>
+    /// The highest number a space can hold. Syscall codes are 2 bytes in the
+    /// bytecode. Opcodes, conditions and data types are 1 byte, Registers are
+    /// null. A register is a 1 byte index into the VM's register array.
+    /// </summary>
+    /// <param name="space">Which ID space to look up the limit for.</param>
+    /// <returns>The highest number allowed in that space, or null if the space
+    /// isn't limited this way.</returns>
     private static int? Limit(IdSpace space) => space switch
     {
         IdSpace.Token => int.MaxValue,
@@ -41,17 +55,44 @@ public class IdRegistry(ILogger<IdRegistry> logger) : IIdRegistry
     };
     //TODO: figure out how to raise the mf'ing opcode size because that SUCKS.
 
-
+    /// <summary>
+    /// Registers a word as a syscall.
+    /// </summary>
+    /// <param name="word">The word used to call this syscall. Must match
+    /// <see cref="WordPattern"/>.</param>
+    /// <param name="handler">The handler to run when this syscall is invoked.</param>
+    /// <returns>bool, false if the request is refused.</returns>
     public bool RegisterSyscall(string word, Action<object> handler)
         => Add(word, new Request(IdKind.Syscall, handler, null));
 
+    /// <summary>
+    /// Registers a word as a long constant.
+    /// </summary>
+    /// <param name="word">The word used to refer to this constant. Must match
+    /// <see cref="WordPattern"/>.</param>
+    /// <param name="value">The constant's value, long.</param>
+    /// <returns>bool, false if this request is refused.</returns>
     public bool RegisterConstant(string word, long value)
         => Add(word, new Request(IdKind.Constant, null, value));
 
+    /// <summary>
+    /// Registers a word as a float constant.
+    /// </summary>
+    /// <param name="word">The word used to refer to this constant. Must match
+    /// <see cref="WordPattern"/>.</param>
+    /// <param name="value">The constant's value, float.</param>
+    /// <returns>bool, false if this request is refused.</returns>
     public bool RegisterConstant(string word, float value)
         => Add(word, new Request(IdKind.Constant, null, value));
 
-    // false (and says why) if the request is refused
+    /// <summary>
+    /// Shared path for every registration. Checks the word, checks that
+    /// registrations are still open, checks that a word hasn't already
+    /// been registered, before adding it to <see cref="_requests"/>.
+    /// </summary>
+    /// <param name="word">The word being registered.</param>
+    /// <param name="request">The request to store for this word.</param>
+    /// <returns>bool, false if the request is refused.</returns>
     private bool Add(string word, Request request)
     {
         lock (_lock)
@@ -78,9 +119,14 @@ public class IdRegistry(ILogger<IdRegistry> logger) : IIdRegistry
         }
     }
 
-    // lowest free num in a space, claims it so the next call skips it, Null
-    // (and syas why) when the sapce is full or its limit is unknown
     // HashSet.Add returns false when num is already there, remember?
+    /// <summary>
+    /// Finds and claims the lowest free number in a space so the next call
+    /// skips it.
+    /// </summary>
+    /// <param name="used">The numbers already claimed, across every space.</param>
+    /// <param name="space">Which space to claim a number from.</param>
+    /// <returns>null when the space is full or its limit is unknown.</returns>
     private int? Claim(UsedIds used, IdSpace space)
     {
         if (Limit(space) is not { } limit)
@@ -103,8 +149,14 @@ public class IdRegistry(ILogger<IdRegistry> logger) : IIdRegistry
         return n;
     }
 
-    // closes registration and gives every request its nums, addng them
-    // to used, sorted by word
+    /// <summary>
+    /// Closes registration and gives every request its numbers, adding them
+    /// to <paramref name="used"/>, sorfed by word.
+    /// </summary>
+    /// <param name="used">The numbers already claimed elsewhere, this gets updated
+    /// with everything claimed here.</param>
+    /// <returns>The allocation for every request that got numbers, sorted by word.
+    /// Requests that failed are skipped.</returns>
     public IReadOnlyList<Allocation> Allocate(UsedIds used)
     {
         lock (_lock)

@@ -9,6 +9,11 @@ using MISAML.Interfaces;
 
 namespace MISAML.Core;
 
+/// <summary>
+/// Reflects over the game's own assembly to find every number and word it
+/// already uses and has reserved, so <see cref="IdRegistry.Allocate"/> knows
+/// which ones mods aren't allowed to claim.
+/// </summary>
 public class IdScanner(ILogger<IdScanner> logger) : IIdScanner
 {
     private const BindingFlags AnyStatic = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
@@ -16,12 +21,30 @@ public class IdScanner(ILogger<IdScanner> logger) : IIdScanner
     private const string EnumMaps = "Asm.General.EnumMaps";
     private const string Lexer = "Asm.Frontend.Lexer";
 
-    // where one src of used nums lives, static dict ingame
+    /// <summary>
+    /// Where one source of used numbers lives, a static dictionary in the game.
+    /// </summary>
+    /// <param name="Type">The full name of the type that holds the dictionary.</param>
+    /// <param name="Member">The name of the static field or property holding the dictionary.</param>
+    /// <param name="Keys">Boolean, true to pull the numbers from the dict's keys,
+    /// false to pull them from its values.</param>
     private record Source(string Type, string Member, bool Keys);
 
     // one ID space, enum that defs the games own numbers, and maps that hold the nums
+    /// <summary>
+    /// One ID space, the enum that defines the game's own numbers for it, and
+    /// every dict that also holds numbers from that space.
+    /// </summary>
+    /// <param name="Space">Which ID space this definition is for.</param>
+    /// <param name="EnumType">The full name of the enum that defines the game's
+    /// own numbers in this space.</param>
+    /// <param name="Sources">Every other static dictionary that also holds
+    /// numbers from this space.</param>
     private record SpaceDef(IdSpace Space, string EnumType, Source[] Sources);
 
+    /// <summary>
+    /// Every ID space the scanner knows how to find, and where to find its numbers.
+    /// </summary>
     private static readonly SpaceDef[] Spaces =
     [
         new(IdSpace.Token, "Asm.Frontend.TkType",
@@ -60,6 +83,13 @@ public class IdScanner(ILogger<IdScanner> logger) : IIdScanner
         ]),
     ];
 
+    /// <summary>
+    /// Scans the game's loaded assembly for every number and word it already
+    /// uses, across every ID space.
+    /// </summary>
+    /// <returns>Every number and word the game already uses. Empty if the game's
+    /// Asm assembly isn't loaded yet, individual spaces come back missing numbers
+    /// if a map got renamed.</returns>
     public UsedIds Scan()
     {
         var numbers = Spaces.ToDictionary(s => s.Space, _ => new HashSet<int>());
@@ -105,7 +135,13 @@ public class IdScanner(ILogger<IdScanner> logger) : IIdScanner
         return used;
     }
 
-    // every num an enum defs, take the type by name
+    /// <summary>
+    /// Every number an enum defines, take the type by name.
+    /// </summary>
+    /// <param name="asm">The assembly to look up the enum type in.</param>
+    /// <param name="typeName">The full name of the enum type.</param>
+    /// <returns>Every value the enum defines, or empty if the type can't be
+    /// found.</returns>
     private static IEnumerable<int> EnumValues(Assembly asm, string typeName)
     {
         var type = asm.GetType(typeName);
@@ -113,8 +149,14 @@ public class IdScanner(ILogger<IdScanner> logger) : IIdScanner
         return Enum.GetValues(type).Cast<object>().Select(o => Convert.ToInt32(o));
     }
 
-    // a static dict field (or prop) read as plain IDict so we don't need game
-    // generic types
+    /// <summary>
+    /// A static dictionary field (or property) read as a plain IDictionary so
+    /// we do not require the game's generic types.
+    /// </summary>
+    /// <param name="asm">The assembly to look the type up in.</param>
+    /// <param name="typeName">The full name of the type that holds the dictionary.</param>
+    /// <param name="member">The name of the static field or property holding the dictionary.</param>
+    /// <returns>The dictionary, or null if the type, member, or value isn't what's expected.</returns>
     internal static IDictionary? Map(Assembly asm, string typeName, string member)
     {
         var type = asm.GetType(typeName);

@@ -8,8 +8,19 @@ using MISAML.Interfaces;
 
 namespace MISAML.Core;
 
+/// <summary>
+/// Takes the numbers <see cref="IdRegistry.Allocate"/> handed out and writes
+/// them into the game's own assembler types and lexer maps via reflection,
+/// then hooks the VM/parser so the new syscalls and constants resolve at runtime.
+/// </summary>
+/// <param name="hooks">Used to hook the game's syscall dispatch and constant resolution.</param>
 public class IdWriter(IHooks hooks, ILogger<IdWriter> logger) : IIdWriter
 {
+    /// <summary>
+    /// Writes every allocation into the game's lexer/enum maps, and hooks the
+    /// VM so syscalls and constants resolve at runtime.
+    /// </summary>
+    /// <param name="allocations">The allocations to apply, as handed out by <see cref="IdRegistry.Allocate"/>.</param>
     public void Apply(IReadOnlyList<Allocation> allocations)
     {
         if (allocations.Count == 0) return;
@@ -78,7 +89,16 @@ public class IdWriter(IHooks hooks, ILogger<IdWriter> logger) : IIdWriter
         }
     }
 
-    // args[0] is the ScCode being run
+    /// <summary>
+    /// Hook for VirtualMachine.HandleSystemCall, runs a mod's handler when the
+    /// VM hits one of the registered syscall codes.
+    /// </summary>
+    /// <param name="vm">The running VirtualMachine instance, passed through to the handler.</param>
+    /// <param name="args">The hooked method's original arguments, `args[0]` is the ScCode being run.</param>
+    /// <param name="handlers">Every registered syscall's handler, keyed by its own code.</param>
+    /// <returns><see cref="HookResult.Continue"/> if `args[0]` is missing or
+    /// isn't a registered syscall. Otherwise <see cref="HookResult.Replace"/>
+    /// with null, since the original method would treat an unknown as an error either way.</returns>
     private HookResult RunSyscall(object? vm, object?[] args, Dictionary<int, Action<object>> handlers)
     {
         if (args.Length == 0 || args[0] == null) return HookResult.Continue();
@@ -99,6 +119,17 @@ public class IdWriter(IHooks hooks, ILogger<IdWriter> logger) : IIdWriter
         return HookResult.Replace(null);
     }
 
+    /// <summary>
+    /// Hook for `BuiltInConstant.Resolve`, gives a registered constant its value
+    /// when the parser resolves it.
+    /// </summary>
+    /// <param name="self">The `BuiltInConstant` instance being resolved.</param>
+    /// <param name="number">The game's `Number` type, used to construct
+    /// the resolved value.</param>
+    /// <param name="constants">Every registered constant's value, keyed by its token.</param>
+    /// <returns><see cref="HookResult.Continue"/> if this constant's token isn't
+    /// one a registered one, otherwise <see cref="HookResult.Replace"/> with
+    /// a new `Number` built from its value.</returns>
     private static HookResult ResolveConstant(object? self, Type number, Dictionary<int, object> constants)
     {
         var token = self?.GetType().GetProperty("Token")?.GetValue(self);
@@ -111,6 +142,15 @@ public class IdWriter(IHooks hooks, ILogger<IdWriter> logger) : IIdWriter
         return HookResult.Replace(Activator.CreateInstance(number, value));
     }
 
+    /// <summary>
+    /// Finds a type in the given assembly by its short name, ignoring
+    /// namespace, since it is not known which namespace a type ends up in
+    /// (as of v0.1.0).
+    /// </summary>
+    /// <param name="asm">The assembly to search.</param>
+    /// <param name="name">The type's short name (no namespace).</param>
+    /// <returns>The type, or null if it isn't found or the assembly can't fully
+    /// load its types.</returns>
     private static Type? FindType(Assembly asm, string name)
     {
         try { return asm.GetTypes().FirstOrDefault(t => t.Name == name); }

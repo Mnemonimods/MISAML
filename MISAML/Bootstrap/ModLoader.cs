@@ -11,6 +11,7 @@ using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
 using MISAML.Interfaces;
+using Serilog;
 
 namespace MISAML.Bootstrap;
 
@@ -281,7 +282,17 @@ public class ModLoader(
         {
             var m = skipped.Mod.Manifest;
             _mods.Add(new ModStatus(m.Id, m.Name, m.Version, true, false, skipped.Reason, m.Description));
-            logger.LogWarning($"{m.Id}: not loading, {skipped.Reason}");
+
+            if (skipped.Problems.Count == 1)
+            {
+                logger.LogWarning($"{m.Id}: not loading, {skipped.Problems[0]}");
+            }
+            else
+            {
+                logger.LogWarning($"{m.Id}: not loading, {skipped.Problems.Count} problems:");
+                foreach (var problem in skipped.Problems)
+                    logger.LogWarning($"{m.Id}:   - {problem}");
+            }
         }
 
         // only mods that will actually load get dlls idx'ed

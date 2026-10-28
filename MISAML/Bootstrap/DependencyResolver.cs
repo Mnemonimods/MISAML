@@ -24,12 +24,13 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
 
             foreach (var mod in alive.Values.ToList())
             {
-                var problem = FindProblem(mod, alive, gone);
-                if (problem == null) continue;
+                var problems = FindProblems(mod, alive, gone);
+                if (problems.Count == 0) continue;
 
+                var skip = new SkippedMod(mod, problems);
                 alive.Remove(mod.Manifest.Id);
-                gone[mod.Manifest.Id] = problem;
-                skipped.Add(new SkippedMod(mod, problem));
+                gone[mod.Manifest.Id] = skip.Reason;
+                skipped.Add(skip);
                 changed = true;
             }
         } while (changed);
@@ -45,7 +46,7 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
         return new ResolveResult(loadOrder, skipped);
     }
 
-    private string? FindProblem(
+    private List<string> FindProblems(
         ReadMod mod,
         Dictionary<string, ReadMod> alive,
         IReadOnlyDictionary<string, string> unavailable)
@@ -78,7 +79,7 @@ public class DependencyResolver(IVersionReq versionReq) : IDependencyResolver
                 problems.Add($"requires {dep.Id} {dep.RawRange}, but {depMod.Manifest.Version} is installed{hint}");
         }
 
-        return problems.Count == 0 ? null : string.Join("; ", problems);
+        return problems;
     }
 
     // deps first, ties broken by id so the order is same every run

@@ -1,6 +1,6 @@
 using System;
 
-namespace MISAML.Exceptions;
+namespace MISAML.Exceptions.Manifests;
 
 public class BadModManifestException : Exception
 {

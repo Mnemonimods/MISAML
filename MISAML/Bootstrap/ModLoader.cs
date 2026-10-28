@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
+using MISAML.Exceptions.Manifests;
 using MISAML.Interfaces;
 
 namespace MISAML.Bootstrap;
@@ -103,11 +104,11 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
     private ModManifest ParseManifest(string json)
     {
         var raw = JsonSerializer.Deserialize<RawManifest>(json, JsonOptions)
-            ?? throw new Exception("mod.json is empty");
+            ?? throw new BadModManifestException("mod.json is empty");
 
         var id = raw.ModId?.Trim();
         if (string.IsNullOrEmpty(id))
-            throw new Exception("mod.json needs a modId");
+            throw new BadModManifestException("mod.json needs a modId");
 
         return new ModManifest(
             id,
@@ -195,7 +196,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             {
                 manifest = ParseManifest(File.ReadAllText(manifestPath));
             }
-            catch (Exception e)
+            catch (BadModManifestException e)
             {
                 logger.LogWarning($"skipping {modDir}: bad mod manifest ({e.GetType().Name}: {e.Message})");
                 continue;
@@ -265,7 +266,7 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
             try
             {
                 if (manifest.EntryAssembly == null && manifest.EntryScript == null)
-                    throw new Exception("mod manifest requires an entry assembly or script!");
+                    throw new ModManifestAssemblyException("mod manifest requires an entry assembly or script!");
 
                 // everything the mod registers while this block runs is owned
                 // by its modId, so Hooks can name the mod in the log
@@ -360,22 +361,22 @@ public class ModLoader(IGodotBridge godotBridge, IHooks hooks, IModSettings modS
         var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
 
         if (manifest.EntryMethod == null)
-            throw new Exception("entryAssembly needs entryMethod in mod.json (Hint: Namespace.Class.Method)");
+            throw new ModManifestAssemblyException("entryAssembly needs entryMethod in mod.json (Hint: Namespace.Class.Method)");
 
         // split at the last dot, before it is the class, after it's the method
         var split = manifest.EntryMethod.LastIndexOf('.');
         if (split <= 0 || split == manifest.EntryMethod.Length - 1)
-            throw new Exception($"entryMethod '{manifest.EntryMethod}' must look like Namespace.Class.Method (or Class.Method with no namespace)");
+            throw new ModManifestAssemblyException($"entryMethod '{manifest.EntryMethod}' must look like Namespace.Class.Method (or Class.Method with no namespace)");
 
         var className = manifest.EntryMethod[..split];
         var methodName = manifest.EntryMethod[(split + 1)..];
 
         var entryType = asm.GetType(className)
-            ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");
+            ?? throw new ModManifestAssemblyException($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");
 
         var initMethod = entryType.GetMethod(
                 methodName, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)
-            ?? throw new Exception($"{className}.{methodName}() not found (must be public static, no parameters)");
+            ?? throw new ModManifestAssemblyException($"{className}.{methodName}() not found (must be public static, no parameters)");
 
         initMethod.Invoke(null, null);
     }

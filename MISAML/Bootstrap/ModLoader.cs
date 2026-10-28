@@ -11,7 +11,6 @@ using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
 using MISAML.Interfaces;
-using Serilog;
 
 namespace MISAML.Bootstrap;
 
@@ -85,19 +84,21 @@ public class ModLoader(
 
     private static string CleanSource(string depId, string source)
     {
+        Exception Invalid() => new FormatException($"dependency '{depId}' has an invalid '{source}'");
+
         if (!Uri.TryCreate(source.Trim(), UriKind.Absolute, out var uri)
             || uri.Scheme != Uri.UriSchemeHttps
             || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
-            throw new Exception($"dependency '{depId}' has an invalid source '{source}'");
+            throw Invalid();
 
         var path = uri.AbsolutePath.Trim('/');
         if (path.EndsWith(".git")) path = path[..^4];
 
         if (path.Split('/').Length != 2)
-            throw new Exception($"dependency '{depId}' has an invalid source '{source}'");
+            throw Invalid();
 
         if (path.Split('/').Any(string.IsNullOrEmpty))
-            throw new Exception($"dependency '{depId}' has an invalid source '{source}'");
+            throw Invalid();
 
         return $"https://github.com/{path}";
     }
@@ -139,11 +140,13 @@ public class ModLoader(
             var range = versionReq.TryParse(rawDep.Version, out var rangeErr)
                         ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
 
+            var source = rawDep.Source == null ? null : CleanSource(depId, rawDep.Source);
+
             dependencies.Add(new Dependency(
                 depId,
                 rawDep.Version,
                 range,
-                rawDep.Source == null ? null : CleanSource(depId, rawDep.Source)
+                source
             ));
         }
 
@@ -333,11 +336,18 @@ public class ModLoader(
     // word its numbers and writes them into the game
     private void AllocateIds()
     {
-        var used = idScanner.Scan();
-        var spaces = used.Numbers.Select(n => $"{n.Key} {n.Value.Count} (highest {n.Value.DefaultIfEmpty(-1).Max()})");
-        logger.LogInformation($"assembler uses {string.Join(", ", spaces)}, {used.Words.Count} words");
+        try
+        {
+            var used = idScanner.Scan();
+            var spaces = used.Numbers.Select(n => $"{n.Key} {n.Value.Count}");
+            logger.LogInformation($"assembler uses {string.Join(", ", spaces)}, {used.Words.Count} words");
 
-        idWriter.Apply(idRegistry.Allocate(used));
+            idWriter.Apply(idRegistry.Allocate(used));
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, $"could not allocate IDs, mods' registered syscalls and constants won't work: {e.Message}");
+        }
     }
 
     // the modId from a manifest that failed to parse, null if it cannot be read
@@ -600,30 +610,40 @@ public class ModLoader(
         // mods load before the game is running, so the actual work waits for OnReady
         godotBridge.OnReady(() =>
         {
-            var script = godotBridge.Instantiate("GDScript");
-            godotBridge.Set(script, "source_code", source);
-
-            var result = Convert.ToInt64(godotBridge.Call(script, "reload"));
-            if (result != 0)
+            try
             {
-                logger.LogError($"{manifest.Id}: GDScript failed to compile (error {result}), see the game console");
-                return;
+                var script = godotBridge.Instantiate("GDScript");
+                godotBridge.Set(script, "source_code", source);
+
+                var result = Convert.ToInt64(godotBridge.Call(script, "reload"));
+                if (result != 0)
+                {
+                    logger.LogError($"{manifest.Id}: GDScript failed to compile (error {result}), see the game console");
+                    return;
+                }
+
+                var instance = godotBridge.Call(script, "new")!;
+                _scriptInstances.Add(instance);
+
+                godotBridge.Call(instance, "set_meta", "mod_dir", modDir);
+                godotBridge.Call(instance, "set_meta", "misaml", godotBridge.ScriptApi);
+
+                if (Equals(godotBridge.Call(instance, "is_class", "Node"), true))
+                {
+                    var tree = godotBridge.CallStatic("Godot.Engine", "GetMainLoop")!;
+                    var root = godotBridge.Get(tree, "root")!;
+
+                    godotBridge.Call(root, "add_child", instance);
+                }
+                else
+                {
+                    logger.LogWarning($"{manifest.Id}: script loaded but it isn't a Node, so it won't run _ready/_process (use 'extends Node')");
+                }
             }
-
-            var instance = godotBridge.Call(script, "new")!;
-            _scriptInstances.Add(instance);
-            godotBridge.Call(instance, "set_meta", "mod_dir", modDir);
-            godotBridge.Call(instance, "set_meta", "misaml", godotBridge.ScriptApi);
-
-            if (Equals(godotBridge.Call(instance, "is_class", "Node"), true))
+            catch (Exception e)
             {
-                var tree = godotBridge.CallStatic("Godot.Engine", "GetMainLoop")!;
-                var root = godotBridge.Get(tree, "root")!;
-                godotBridge.Call(root, "add_child", instance);
-            }
-            else
-            {
-                logger.LogWarning($"{manifest.Id}: script loaded but it isn't a Node, so it won't run _ready/_process (use 'extends Node')");
+                // this runs after LoadMod has finished, so its try/catch can't see it
+                logger.LogError(e, $"{manifest.Id}: GDScript failed to start: {e.Message}");
             }
         });
     }

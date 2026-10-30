@@ -9,6 +9,7 @@ using MISAML.Debug.Interfaces;
 using MISAML.Godot;
 using MISAML.Interfaces;
 using Serilog;
+using Serilog.Events;
 
 namespace MISAML.Bootstrap;
 
@@ -21,11 +22,18 @@ public class DependencyInjector : IDisposable
 
     public ServiceProvider Services { get; private set; } = null!;
 
+    private const string LogTemplate = "[{Elapsed:l} {Level:u3}] {Message:lj}{NewLine}{Exception}";
+
     public void Initialize()
     {
+        try { File.WriteAllText(logPath, ""); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+
         var serilogLogger = new LoggerConfiguration()
-            .WriteTo.Console()
+            .Enrich.With(new LogEnricher())
+            .WriteTo.Console(outputTemplate: LogTemplate)
             .WriteTo.File(logPath,
+                outputTemplate: LogTemplate,
                 retainedFileCountLimit: null)
             .CreateLogger();
 

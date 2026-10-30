@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -26,13 +27,13 @@ public static class Primitives
     #region Godot objects (property/method system)
 
     /// <summary>
-    /// Gets the property name of a godotObject
+    /// Gets the value of a property of a GodotObject. Nested paths work too, like <c>"position:x"</c>
     /// </summary>
     /// <param name="instance">The GodotObject</param>
     /// <param name="propertyName">The property name to search for</param>
-    /// <returns>the property name to be searched</returns>
-    public static object? Get(GodotObject instance, string propertyName)
-        => FromVariant(instance.GetIndexed(propertyName));
+    /// <returns>the value of the property</returns>
+    public static object? Get(object instance, string propertyName)
+        => FromVariant(((GodotObject)instance).GetIndexed(CachedPath(propertyName)));
 
     /// <summary>
     /// Sets a property inside a GodotObject with a specific value
@@ -40,42 +41,42 @@ public static class Primitives
     /// <param name="instance">The GodotObject</param>
     /// <param name="propertyName">The propertyName to set</param>
     /// <param name="value">The value to set the property to</param>
-    public static void Set(GodotObject instance, string propertyName, object? value)
-        => instance.SetIndexed(propertyName, ToVariant(value));
+    public static void Set(object instance, string propertyName, object? value)
+        => ((GodotObject)instance).SetIndexed(CachedPath(propertyName), ToVariant(value));
 
     /// <summary>
-    /// Calls a property inside a GodotObject with specified args <br/>
-    /// <b> Note: </b> the method to be called has to be in snake_case when referring to godot's built in methods
+    /// Calls a method on a GodotObject with the given args
     /// </summary>
     /// <param name="instance">the GodotObject</param>
     /// <param name="methodName">The method to call</param>
     /// <param name="args">optional args for the method</param>
     /// <returns>the result of the method call</returns>
-    public static object? Call(GodotObject instance, string methodName, object?[] args)
-        => FromVariant(instance.Call(methodName, args.Select(ToVariant).ToArray()));
+    public static object? Call(object instance, string methodName, object?[] args)
+        => FromVariant(((GodotObject)instance).Call(CachedName(methodName), ToVariants(args)));
 
     /// <summary>
     /// calls the <paramref name="methodName"/> on the object during idle time <br/>
-    /// <b> Note: </b> this always will return NULL, not the result of the method called <br/>
+    /// <b> Note: </b> returns nothing, the called method's result is discarded (use <c>Call</c> if you need it) <br/>
     /// the method to be called has to be in snake_case when referring to godot's built in methods
     /// </summary>
     /// <param name="instance">the GodotObject</param>
     /// <param name="methodName">The method to call</param>
     /// <param name="args">optional args for the method</param>
-    public static void CallDeferred(GodotObject instance, string methodName, object?[] args)
-        => instance.CallDeferred(methodName, args.Select(ToVariant).ToArray());
+    public static void CallDeferred(object instance, string methodName, object?[] args)
+        => ((GodotObject)instance).CallDeferred(CachedName(methodName), ToVariants(args));
 
+    // returns object not GodotObject, so the bridge doesn't need Godot's types
     /// <summary>
     /// instantiates a godot class
     /// </summary>
     /// <param name="className">the classname to instantiate</param>
     /// <returns>the instantiated class as a GodotObject</returns>
     /// <exception cref="Exception">thrown when classname returns a null/non-object</exception>
-    public static GodotObject Instantiate(string className)
+    public static object Instantiate(string className)
     {
         var variant = ClassDB.Instantiate(className);
         return variant.AsGodotObject()
-               ?? throw new Exception($"ClassDB.Instantiate({className}) returned null/non-object!");
+            ?? throw new Exception($"ClassDB.Instantiate({className}) returned null/non-object!");
     }
 
     /// <summary>
@@ -86,8 +87,8 @@ public static class Primitives
     /// <b>True</b> when the instance is valid <br/>
     /// <b>False</b> when the instance is not valid
     /// </returns>
-    public static bool IsInstanceValid(GodotObject instance)
-        => GodotObject.IsInstanceValid(instance);
+    public static bool IsInstanceValid(object instance)
+        => instance is GodotObject g && GodotObject.IsInstanceValid(g);
 
     #endregion
 
@@ -106,15 +107,18 @@ public static class Primitives
     /// <param name="handler">the handler to call when the signal is emitted</param>
     /// <param name="flags">Connection flags that modify behavior. <b>See:</b> <see href="https://docs.godotengine.org/en/stable/classes/class_object.html#enum-object-connectflags">ConnectFlags</see> in the official Godot docs</param>
     /// <exception cref="ArgumentException">thrown when the specified instance has no signal</exception>
-    public static unsafe void Connect(GodotObject instance, string signalName, Action<object?[]> handler, GodotObject.ConnectFlags flags)
+    public static unsafe void Connect(object instance, string signalName, Action<object?[]> handler, uint flags)
     {
-        if (!instance.HasSignal(signalName))
-            throw new ArgumentException($"{instance.GetType().Name} has no signal '{signalName}'");
+        var target = (GodotObject)instance;
+        var signal = CachedName(signalName);
+
+        if (!target.HasSignal(signal))
+            throw new ArgumentException($"{target.GetType().Name} has no signal '{signalName}'");
 
         var callable = Callable.CreateWithUnsafeTrampoline(handler, &SignalTrampoline);
 
-        lock (Connections) Connections[(instance, signalName, handler)] = callable;
-        instance.Connect(signalName, callable, (uint)flags);
+        lock (Connections) Connections[(target, signalName, handler)] = callable;
+        target.Connect(signal, callable, flags);
     }
 
     // Godot calls this with as many args the signal has
@@ -188,16 +192,18 @@ public static class Primitives
     /// <param name="signalName">the signal remove</param>
     /// <param name="handler">The handler the signal normally calls</param>
     /// <exception cref="Exception">Thrown when the signal was never connected</exception>
-    public static void Disconnect(GodotObject instance, string signalName, Action<object?[]> handler)
+    public static void Disconnect(object instance, string signalName, Action<object?[]> handler)
     {
+        var target = (GodotObject)instance;
+
         Callable callable;
         lock (Connections)
         {
-            if (!Connections.Remove((instance, signalName, handler), out callable)) throw new Exception("The signal was never connected"); // never connected
-
+            if (!Connections.Remove((target, signalName, handler), out callable))
+                throw new Exception("The signal was never connected");
         }
 
-        instance.Disconnect(signalName, callable);
+        target.Disconnect(CachedName(signalName), callable);
     }
 
     #endregion
@@ -256,24 +262,40 @@ public static class Primitives
 
     // non-godot
     /// <summary>
-    /// Reads the value of an instance field or property by name, using reflection.
+    /// Reads the value of an instance field or property by name, including private
+    /// ones. The member is looked up by reflection first-time then cached for
+    /// later usage.
     /// </summary>
     /// <param name="instance">the object that contains the member</param>
     /// <param name="name">name of the member invoked</param>
     /// <returns>The current value of the field or property</returns>
+    /// <exception cref="MissingMemberException">Thrown when <paramref name="instance"/>
+    /// has no field or property with that name.</exception>
     public static object? GetMember(object instance, string name)
-        => instance.GetType().InvokeMember(name,
-            BindingFlags.GetField | BindingFlags.GetProperty | Inst, null, instance, null);
+        => FindMember(instance.GetType(), name) switch
+        {
+            FieldInfo f => f.GetValue(instance),
+            PropertyInfo p => p.GetValue(instance),
+            _ => throw new MissingMemberException(instance.GetType().FullName, name),
+        };
 
     /// <summary>
-    /// Sets the value of an instance field or property by name
+    /// Sets the value of an instance field or property by name, including
+    /// private ones. The member is looked up by reflection first-time then
+    /// cached for later usage.
     /// </summary>
     /// <param name="instance">the object that contains the member</param>
     /// <param name="name">name of the member invoked</param>
     /// <param name="value">The value to set</param>
+    /// <exception cref="MissingMemberException">Thrown when <paramref name="instance"/> has no field or property with that name</exception>
     public static void SetMember(object instance, string name, object? value)
-        => instance.GetType().InvokeMember(name,
-            BindingFlags.SetField | BindingFlags.SetProperty | Inst, null, instance, [value]);
+    {
+        switch (FindMember(instance.GetType(), name))
+        {
+            case FieldInfo f: f.SetValue(instance, value); break;
+            case PropertyInfo p: p.SetValue(instance, value); break;
+        }
+    }
 
     /// <summary>
     /// Calls a member of an object
@@ -301,25 +323,51 @@ public static class Primitives
 
     #region internals
 
+    // string -> StringName/NodePath makes a new finalizable object on every call, so each
+    // unique name is converted once and reused
+    private static readonly ConcurrentDictionary<string, StringName> StringNames = new();
+    private static readonly ConcurrentDictionary<string, NodePath> NodePaths = new();
+
+    private static StringName CachedName(string s) => StringNames.GetOrAdd(s, static n => new StringName(n));
+    private static NodePath CachedPath(string s) => NodePaths.GetOrAdd(s, static n => new NodePath(n));
+
+    // field/property per (type, name), found first time, then reused, caching
+    private static readonly ConcurrentDictionary<(Type Type, string Name), MemberInfo> MemberCache = new();
+
+    private static MemberInfo FindMember(Type type, string name)
+        => MemberCache.GetOrAdd((type, name), static key =>
+        {
+            var (t, n) = key;
+            // field first, then prop, same order as InvokeMember
+            return (MemberInfo?)t.GetField(n, Inst)
+                ?? t.GetProperty(n, Inst)
+                ?? throw new MissingMemberException(t.FullName, n);
+        });
+
+    // type name => Type, searched the first time, cached after
+    private static readonly ConcurrentDictionary<string, Type> TypeCache = [];
+
     /// <summary>
-    /// Resolves a type by its name in the isolated context.
+    /// Resolves a type by its name in the isolated context. Cached after the first lookup.
     /// </summary>
     /// <param name="typeName">Name of the type to resolve</param>
     /// <returns>Resolved type</returns>
     /// <exception cref="Exception">Thrown when there's no type found in the assembly</exception>
     private static Type ResolveType(string typeName)
-    {
-        var isolated = AssemblyLoadContext.GetLoadContext(typeof(Primitives).Assembly)!;
-
-        foreach (var asmName in new[] { "GodotSharp", "Mnemonimov", "Asm" })
+        => TypeCache.GetOrAdd(typeName, static name =>
         {
-            var asm = isolated.Assemblies.FirstOrDefault(a => a.GetName().Name == asmName);
-            var type = asm?.GetType(typeName);
-            if (type != null) return type;
-        }
+            var isolated = AssemblyLoadContext.GetLoadContext(typeof(Primitives).Assembly)
+                ?? throw new Exception("couldn't get the load context of MISAML.GodotAPI");
 
-        throw new Exception($"type {typeName} not found in GodotSharp/Mnemonimov/Asm");
-    }
+            foreach (var asmName in new[] { "GodotSharp", "Mnemonimov", "Asm" })
+            {
+                var asm = isolated.Assemblies.FirstOrDefault(a => a.GetName().Name == asmName);
+                var type = asm?.GetType(name);
+                if (type != null) return type;
+            }
+
+            throw new Exception($"type {name} not found in GodotSharp/Mnemonimov/Asm");
+        });
 
     /// <summary>
     /// Converts a Godot Variant to a C# object
@@ -328,11 +376,36 @@ public static class Primitives
     /// <returns>A C# object</returns>
     private static object? FromVariant(Variant v) => v.VariantType switch
     {
-        Variant.Type.Array => v.AsGodotArray().Select(FromVariant).ToArray(),
-        Variant.Type.Dictionary => v.AsGodotDictionary()
-            .ToDictionary(kv => FromVariant(kv.Key)!, kv => FromVariant(kv.Value)),
+        Variant.Type.Array => FromGodotArray(v.AsGodotArray()),
+        Variant.Type.Dictionary => FromGodotDict(v.AsGodotDictionary()),
         _ => v.Obj
     };
+
+    /// <summary>
+    /// Converts a Godot array to a C# <c>object?[]</c>, element by element
+    /// </summary>
+    /// <param name="array">The Godot array to convert</param>
+    /// <returns>A new array with every element converted</returns>
+    private static object?[] FromGodotArray(Godot.Collections.Array array)
+    {
+        var result = new object?[array.Count];
+        for (var i = 0; i < result.Length; i++)
+            result[i] = FromVariant(array[i]);
+        return result;
+    }
+
+    /// <summary>
+    /// Converts a Godot dictionary to a C# <c>Dictionary&lt;object, object?&gt;</c>, key and value
+    /// </summary>
+    /// <param name="dict">The Godot dictionary to convert</param>
+    /// <returns>A new dictionary with every key and value converted</returns>
+    private static Dictionary<object, object?> FromGodotDict(Godot.Collections.Dictionary dict)
+    {
+        var result = new Dictionary<object, object?>(dict.Count);
+        foreach (var kv in dict)
+            result[FromVariant(kv.Key)!] = FromVariant(kv.Value);
+        return result;
+    }
 
     /// <summary>
     /// Converts a C# object to a Godot Variant.
@@ -343,10 +416,123 @@ public static class Primitives
     {
         null => new Variant(),
         Variant v => v,
-        object?[] arr => Variant.From(new Godot.Collections.Array(arr.Select(x => ToVariant(x)))),
-        Dictionary<object, object?> dict => Variant.From(ToGodotDict(dict)),
+
+        // ILSpy GodotSharp.dll then look for Variant.Type for more
+
+        //TODO: literally anything but this, please don't look here :3, bad code doesn't exist!
+
+        // basic types
+        bool v => Variant.From(v),
+        char v => Variant.From(v),
+        sbyte v => Variant.From(v),
+        byte v => Variant.From(v),
+        short v => Variant.From(v),
+        ushort v => Variant.From(v),
+        int v => Variant.From(v),
+        uint v => Variant.From(v),
+        long v => Variant.From(v),
+        ulong v => Variant.From(v),
+        float v => Variant.From(v),
+        double v => Variant.From(v),
+        string v => Variant.From(v),
+
+        // objects and collections
+        GodotObject x => Variant.From(x),
+        Godot.Collections.Array x => Variant.From(x),
+        Godot.Collections.Dictionary x => Variant.From(x),
+
+        // maths & engine structs
+        Vector2 x => Variant.From(x),
+        Vector2I x => Variant.From(x),
+        Rect2 x => Variant.From(x),
+        Rect2I x => Variant.From(x),
+        Transform2D x => Variant.From(x),
+        Vector3 x => Variant.From(x),
+        Vector3I x => Variant.From(x),
+        Vector4 x => Variant.From(x),
+        Vector4I x => Variant.From(x),
+        Plane x => Variant.From(x),
+        Quaternion x => Variant.From(x),
+        Aabb x => Variant.From(x),
+        Basis x => Variant.From(x),
+        Transform3D x => Variant.From(x),
+        Projection x => Variant.From(x),
+        Color x => Variant.From(x),
+        StringName x => Variant.From(x),
+        NodePath x => Variant.From(x),
+        Rid x => Variant.From(x),
+        Callable x => Variant.From(x),
+        Signal x => Variant.From(x),
+
+        // packed arrays
+        byte[] x => Variant.From(x),
+        int[] x => Variant.From(x),
+        long[] x => Variant.From(x),
+        float[] x => Variant.From(x),
+        double[] x => Variant.From(x),
+        string[] x => Variant.From(x),
+        Vector2[] x => Variant.From(x),
+        Vector3[] x => Variant.From(x),
+        Vector4[] x => Variant.From(x),
+        Color[] x => Variant.From(x),
+        StringName[] x => Variant.From(x),
+        NodePath[] x => Variant.From(x),
+        Rid[] x => Variant.From(x),
+
+        // C# collections get converted element by element
+        // (after the packed arrays above, so those keep their fast path)
+        System.Collections.IList list => Variant.From(ToGodotArray(list)),
+        System.Collections.IDictionary dict => Variant.From(ToGodotDict(dict)),
+
+        // anything left, generic Godot collections, enums. Cached after first use.
         _ => (Variant)VariantFromFor(value.GetType()).Invoke(null, [value])!,
     };
+
+    /// <summary>
+    /// Creates a Godot array from any C# list or array, converting each element
+    /// </summary>
+    /// <param name="list">The C# list to convert</param>
+    /// <returns>A Godot array</returns>
+    private static Godot.Collections.Array ToGodotArray(System.Collections.IList list)
+    {
+        var result = new Godot.Collections.Array();
+        foreach (var item in list)
+            result.Add(ToVariant(item));
+        return result;
+    }
+
+    /// <summary>
+    /// Creates a Godot dictionary from any C# dictionary, converting each key and value
+    /// </summary>
+    /// <param name="dict">The C# dictionary to convert</param>
+    /// <returns>A Godot dictionary</returns>
+    private static Godot.Collections.Dictionary ToGodotDict(System.Collections.IDictionary dict)
+    {
+        var result = new Godot.Collections.Dictionary();
+        foreach (System.Collections.DictionaryEntry entry in dict)
+            result[ToVariant(entry.Key)] = ToVariant(entry.Value);
+        return result;
+    }
+
+    /// <summary>
+    /// Converts a whole argument array to Variants in one go, for calls
+    /// crossing into Godot.
+    /// </summary>
+    /// <param name="args">The arguments to convert, in order.</param>
+    /// <returns>The same arguments as Variants. Empty arrays stay empty.</returns>
+    private static Variant[] ToVariants(object?[] args)
+    {
+        if (args.Length == 0) return [];
+
+        var result = new Variant[args.Length];
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            result[i] = ToVariant(args[i]);
+        }
+
+        return result;
+    }
 
     // Variant.From<T> generic, so each C# type needs own closed ver,
     // built the first time that type is used, then cached
@@ -374,20 +560,6 @@ public static class Primitives
         }
     }
 
-    /// <summary>
-    /// Creates a new GodotDictionary
-    /// </summary>
-    /// <param name="dict">
-    /// The C# dictionary to convert
-    /// </param>
-    /// <returns>A GodotDictionary</returns>
-    private static Godot.Collections.Dictionary ToGodotDict(Dictionary<object, object?> dict)
-    {
-        var result = new Godot.Collections.Dictionary();
-        foreach (var kv in dict)
-            result[ToVariant(kv.Key)] = ToVariant(kv.Value);
-        return result;
-    }
     #endregion
 }
 
@@ -403,6 +575,7 @@ internal static class Logger
     public static void Write(string @class, string message)
     {
         var line = $"{_stopwatch.Elapsed.TotalSeconds:F6} [MISAML.GodotAPI.{@class}] {message}";
-        File.AppendAllText(LogPath, line + "\n");
+        try { File.AppendAllText(LogPath, line + "\n"); }
+        catch (Exception) { }
     }
 }

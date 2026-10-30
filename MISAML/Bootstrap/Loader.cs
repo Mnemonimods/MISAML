@@ -123,7 +123,7 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
         }
         catch (Exception e)
         {
-            logger.LogError("Start failed: " + e.Message);
+            logger.LogError(e, $"Start failed: {e.Message}");
         }
     }
 

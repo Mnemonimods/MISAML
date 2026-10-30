@@ -52,17 +52,24 @@ public class DependencyInjector : IDisposable
         services.AddSingleton<IModLoader, ModLoader>();
         services.AddTransient<IModSettings, ModSettings>();
         services.AddTransient<IVersionReq, VersionReq>();
+        services.AddSingleton<IDependencyResolver, DependencyResolver>();
         services.AddSingleton<Loader>();
         services.AddSingleton<GodotBridgePatch>();
-
-        // debug things but that are required for the dependency injection, lol
         services.AddSingleton<IDebug, Debug.Debug>();
         services.AddSingleton<IBridge, Bridge>();
         services.AddSingleton<IGodotSharp, GodotSharp>();
         services.AddSingleton<IMnemonimov, Mnemonimov>();
         services.AddSingleton<IAsm, Asm>();
+        services.AddSingleton<IIdScanner, IdScanner>();
+        services.AddSingleton<IIdRegistry, IdRegistry>();
+        services.AddSingleton<IIdWriter, IdWriter>();
+        services.AddSingleton<IIds, Ids>();
 
         Services = services.BuildServiceProvider();
+
+        // nothing asks for/uses IIds, but building it is what hands
+        // mods the reg and it has to exist before any mods load
+        Services.GetRequiredService<IIds>();
     }
 
     public void Dispose() => Services?.Dispose();

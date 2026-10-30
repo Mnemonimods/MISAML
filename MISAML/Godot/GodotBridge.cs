@@ -8,8 +8,6 @@ using MISAML.Interfaces;
 
 namespace MISAML.Godot;
 
-using Microsoft.Extensions.Logging;
-
 public class GodotBridge() : IGodotBridge
 {
     private static ILogger _logger = NullLogger.Instance;
@@ -78,7 +76,7 @@ public class GodotBridge() : IGodotBridge
     // bridge for GDScript -> C#
     private readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
     {
-        ["log"] = args => { _logger.LogInformation("Script", args: args); return null; },
+        ["log"] = args => { _logger.LogInformation($"Script: {string.Join(" ", args)}"); return null; },
     };
 
     private static object? _scriptApi;
@@ -135,7 +133,8 @@ public class GodotBridge() : IGodotBridge
     public void OnReady(Action action)
     {
         lock (_lock) { if (!_ready) { _readyActions.Add(action); return; } }
-        RunOnMainThread(action); // already ready, run now
+        try { RunOnMainThread(action); }
+        catch (Exception e) { _logger.LogWarning(e, $"ready handler threw: {e.Message}"); }
     }
 
     // loader calls this once, the first time the game calls into a bridge method
@@ -153,7 +152,7 @@ public class GodotBridge() : IGodotBridge
         RunOnMainThread(() =>
         {
             foreach (var a in run)
-                try { a(); } catch (Exception e) { _logger.LogWarning($"ready handler threw: {e.Message}"); }
+                try { a(); } catch (Exception e) { _logger.LogWarning(e, $"ready handler threw: {e.Message}"); }
         });
     }
 

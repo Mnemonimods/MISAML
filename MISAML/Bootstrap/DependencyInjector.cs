@@ -55,15 +55,11 @@ public class DependencyInjector : IDisposable
         services.AddSingleton<IDependencyResolver, DependencyResolver>();
         services.AddSingleton<Loader>();
         services.AddSingleton<GodotBridgePatch>();
-
-        // debug things but that are required for the dependency injection, lol
         services.AddSingleton<IDebug, Debug.Debug>();
         services.AddSingleton<IBridge, Bridge>();
         services.AddSingleton<IGodotSharp, GodotSharp>();
         services.AddSingleton<IMnemonimov, Mnemonimov>();
         services.AddSingleton<IAsm, Asm>();
-
-        // idk where to put this lol
         services.AddSingleton<IIdScanner, IdScanner>();
         services.AddSingleton<IIdRegistry, IdRegistry>();
         services.AddSingleton<IIdWriter, IdWriter>();

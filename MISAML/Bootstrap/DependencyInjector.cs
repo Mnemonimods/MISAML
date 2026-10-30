@@ -23,6 +23,9 @@ public class DependencyInjector : IDisposable
 
     public void Initialize()
     {
+        try { File.WriteAllText(logPath, ""); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+
         var serilogLogger = new LoggerConfiguration()
             .WriteTo.Console()
             .WriteTo.File(logPath,

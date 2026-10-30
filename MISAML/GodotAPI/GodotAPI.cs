@@ -454,7 +454,7 @@ public static class Primitives
         Rid[] x => Variant.From(x),
 
         // C# collections get converted element by element
-        object?[] arr => Variant.From(new Godot.Collections.Array(arr.Select(x => ToVariant(x)))),
+        object?[] arr => Variant.From(new Godot.Collections.Array(arr.Select(ToVariant))),
         Dictionary<object, object?> dict => Variant.From(ToGodotDict(dict)),
 
         // anything left, generic Godot collections, enums. Cached after first use.

@@ -11,6 +11,7 @@ using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
 using MISAML.Interfaces;
+using System.Threading;
 
 namespace MISAML.Bootstrap;
 
@@ -328,19 +329,21 @@ public class ModLoader(
         var disabled = _mods.Count(s => !s.Enabled);
 
         logger.LogInformation($"{loaded} of {_mods.Count} mods loaded ({notLoaded} not loaded, {disabled} disabled)");
-
-        godotBridge.OnReady(AllocateIds);
     }
+
+    private int _allocated;
 
     // runs once, after every mod has loaded and registered, gives each registered
     // word its numbers and writes them into the game
-    private void AllocateIds()
+    public void AllocateIds()
     {
+        if (Interlocked.Exchange(ref _allocated, 1) != 0) return; // only ever once
+
         try
         {
             var used = idScanner.Scan();
-            var spaces = used.Numbers.Select(n => $"{n.Key} {n.Value.Count}");
-            logger.LogInformation($"assembler uses {string.Join(", ", spaces)}, {used.Words.Count} words");
+            var spaces = used.Numbers.Select(n => $"{n.Value.Count} {n.Key}(s)");
+            logger.LogInformation($"IDs already used: {string.Join(", ", spaces)}, {used.Words.Count} reserved word(s)");
 
             idWriter.Apply(idRegistry.Allocate(used));
         }

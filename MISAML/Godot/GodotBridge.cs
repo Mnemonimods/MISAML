@@ -16,62 +16,57 @@ public class GodotBridge() : IGodotBridge
         _logger = logger;
     }
 
-    private static Assembly? _isolatedApi;
-    private static readonly Dictionary<string, MethodInfo> _cache = new();
     private static readonly object _lock = new();
 
-    // loader calls this once it has the isolated context MISAML.GodotAPI.dll
-    // ref, no resolving w/ this
-    public static void Bind(Assembly isolatedApi) => _isolatedApi = isolatedApi;
-
-    // first use of a primitive looks it up by name and caches MethodInfo
-    private MethodInfo Resolve(string name)
+    // loader calls this once it has the isolated context MISAML.GodotAPI.dll.
+    // fills every field in the API with the Primitives method of the same name,
+    // Reflection happens here and nowhere else, after this first call every call
+    // is a normal delegate call. a mismatch (missing method, wrong args) fails here
+    // at startup, not on first use, good for devs
+    public static void Bind(Assembly isolatedApi)
     {
-        lock (_lock)
+        var primitives = isolatedApi.GetType("MISAML.GodotAPI.Primitives")
+            ?? throw new Exception("MISAML.GodotAPI.Primitives not found!");
+
+        foreach (var field in typeof(API).GetFields(BindingFlags.Public | BindingFlags.Static))
         {
-            if (_cache.TryGetValue(name, out var cached)) return cached;
-            if (_isolatedApi == null) throw new InvalidOperationException("GodotBridge.Bind() has not run yet!");
+            var method = primitives.GetMethod(field.Name, BindingFlags.Public | BindingFlags.Static)
+                ?? throw new Exception($"Primitives.{field.Name} not found!");
 
-            var type = _isolatedApi.GetType("MISAML.GodotAPI.Primitives")
-                       ?? throw new Exception("MISAML.GodotAPI.Primitives not found!");
-
-            var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.Static)
-                         ?? throw new Exception($"Primitives.{name} not found!");
-
-            _cache[name] = method;
-            _logger.LogDebug($"resolved {name}");
-            return method;
+            try
+            {
+                field.SetValue(null, Delegate.CreateDelegate(field.FieldType, method));
+            }
+            catch (ArgumentException e)
+            {
+                throw new Exception($"Primitives.{field.Name} doesn't match what GodotBridge expected: {e.Message}", e);
+            }
         }
     }
 
-    // unwrap anything wrapped in TargetInvocationExpection, some primitives wrap
-    // them another time (InvokeMember ones), unwrap every layer here
-    private object? Invoke(string name, params object?[] args)
+    // primitives that use reflection internally (InvokeMember, property getters, constructors)
+    // wrap the real error in TargetInvocationException, rethrow the real one
+    private static void Rethrow(TargetInvocationException e)
     {
-        try { return Resolve(name).Invoke(null, args); }
-        catch (TargetInvocationException e)
-        {
-            Exception ue = e;
-            while (ue is TargetInvocationException t && t.InnerException != null)
-                ue = t.InnerException;
+        Exception real = e;
+        while (real is TargetInvocationException t && t.InnerException is { } inner)
+            real = inner;
 
-            ExceptionDispatchInfo.Capture(ue).Throw();
-            throw; // unreachable
-        }
+        ExceptionDispatchInfo.Capture(real).Throw();
     }
 
     // Godot objects
-    public object? Get(object instance, string propertyName) => Invoke(nameof(Get), instance, propertyName);
-    public void Set(object instance, string propertyName, object? value) => Invoke(nameof(Set), instance, propertyName, value);
-    public object? Call(object instance, string methodName, params object?[] args) => Invoke(nameof(Call), instance, methodName, args);
-    public void CallDeferred(object instance, string methodName, params object?[] args) => Invoke(nameof(CallDeferred), instance, methodName, args);
-    public object Instantiate(string className) => Invoke(nameof(Instantiate), className)!;
-    public bool IsInstanceValid(object instance) => (bool)Invoke(nameof(IsInstanceValid), instance)!;
-
+    public object? Get(object instance, string propertyName) => API.Get(instance, propertyName);
+    public void Set(object instance, string propertyName, object? value) => API.Set(instance, propertyName, value);
+    public object? Call(object instance, string methodName, params object?[] args) => API.Call(instance, methodName, args);
+    public void CallDeferred(object instance, string methodName, params object?[] args) => API.CallDeferred(instance, methodName, args);
+    public object Instantiate(string className) => API.Instantiate(className);
+    public bool IsInstanceValid(object instance) => API.IsInstanceValid(instance);
+ 
     // signals (handler gets signals args, empty if none)
-    public void Connect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Connect), instance, signalName, handler);
-    public object CreateCallable(Func<object?[], object?> function) => Invoke(nameof(CreateCallable), function)!;
-    public void Disconnect(object instance, string signalName, Action<object?[]> handler) => Invoke(nameof(Disconnect), instance, signalName, handler);
+    public void Connect(object instance, string signalName, Action<object?[]> handler) => API.Connect(instance, signalName, handler, 0);
+    public object CreateCallable(Func<object?[], object?> function) => API.CreateCallable(function);
+    public void Disconnect(object instance, string signalName, Action<object?[]> handler) => API.Disconnect(instance, signalName, handler);
 
     // bridge for GDScript -> C#
     private readonly Dictionary<string, Func<object?[], object?>> _exposed = new()
@@ -106,23 +101,54 @@ public class GodotBridge() : IGodotBridge
         return function(args[1..]);
     }
 
-
-
     // static
-    public object? CallStatic(string typeName, string methodName, params object?[] args) => Invoke(nameof(CallStatic), typeName, methodName, args);
-    public object? GetStatic(string typeName, string memberName) => Invoke(nameof(GetStatic), typeName, memberName);
-    public void SetStatic(string typeName, string memberName, object? value) => Invoke(nameof(SetStatic), typeName, memberName, value);
-
+    public object? CallStatic(string typeName, string methodName, params object?[] args)
+    {
+        try { return API.CallStatic(typeName, methodName, args); }
+        catch (TargetInvocationException e) { Rethrow(e); throw; }
+    }
+ 
+    public object? GetStatic(string typeName, string memberName)
+    {
+        try { return API.GetStatic(typeName, memberName); }
+        catch (TargetInvocationException e) { Rethrow(e); throw; }
+    }
+ 
+    public void SetStatic(string typeName, string memberName, object? value)
+    {
+        try { API.SetStatic(typeName, memberName, value); }
+        catch (TargetInvocationException e) { Rethrow(e); throw; }
+    }
+ 
     // builders
-    public object Construct(string typeName, params object?[] args) => Invoke(nameof(Construct), typeName, args)!;
-
+    public object Construct(string typeName, params object?[] args)
+    {
+        try { return API.Construct(typeName, args); }
+        catch (TargetInvocationException e) { Rethrow(e); throw; }
+    }
+ 
     // non-Godot stuff
-    public object? GetMember(object instance, string name) => Invoke(nameof(GetMember), instance, name);
-    public void SetMember(object instance, string name, object? value) => Invoke(nameof(SetMember), instance, name, value);
-    public object? CallMember(object instance, string name, params object?[] args) => Invoke(nameof(CallMember), instance, name, args);
-
+    public object? GetMember(object instance, string name)
+    {
+        try { return API.GetMember(instance, name); }
+        catch (TargetInvocationException e) { Rethrow(e); throw; }
+    }
+ 
+    public void SetMember(object instance, string name, object? value)
+    {
+        try { API.SetMember(instance, name, value); }
+        catch (TargetInvocationException e) { Rethrow(e); throw; }
+    }
+ 
+    public object? CallMember(object instance, string name, params object?[] args)
+    {
+        try { return API.CallMember(instance, name, args); }
+        catch (TargetInvocationException e) { Rethrow(e); throw; }
+    }
+ 
     // threading
-    public void RunOnMainThread(Action action) => Invoke(nameof(RunOnMainThread), action);
+    public void RunOnMainThread(Action action) => API.RunOnMainThread(action);
+
 
     // ready hook
     // mods load VERY early, before scene tree exists, so any mod that wants to

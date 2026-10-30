@@ -62,7 +62,7 @@ public class GodotBridge() : IGodotBridge
     public void CallDeferred(object instance, string methodName, params object?[] args) => API.CallDeferred(instance, methodName, args);
     public object Instantiate(string className) => API.Instantiate(className);
     public bool IsInstanceValid(object instance) => API.IsInstanceValid(instance);
- 
+
     // signals (handler gets signals args, empty if none)
     public void Connect(object instance, string signalName, Action<object?[]> handler) => API.Connect(instance, signalName, handler, 0);
     public object CreateCallable(Func<object?[], object?> function) => API.CreateCallable(function);
@@ -107,45 +107,45 @@ public class GodotBridge() : IGodotBridge
         try { return API.CallStatic(typeName, methodName, args); }
         catch (TargetInvocationException e) { Rethrow(e); throw; }
     }
- 
+
     public object? GetStatic(string typeName, string memberName)
     {
         try { return API.GetStatic(typeName, memberName); }
         catch (TargetInvocationException e) { Rethrow(e); throw; }
     }
- 
+
     public void SetStatic(string typeName, string memberName, object? value)
     {
         try { API.SetStatic(typeName, memberName, value); }
         catch (TargetInvocationException e) { Rethrow(e); throw; }
     }
- 
+
     // builders
     public object Construct(string typeName, params object?[] args)
     {
         try { return API.Construct(typeName, args); }
         catch (TargetInvocationException e) { Rethrow(e); throw; }
     }
- 
+
     // non-Godot stuff
     public object? GetMember(object instance, string name)
     {
         try { return API.GetMember(instance, name); }
         catch (TargetInvocationException e) { Rethrow(e); throw; }
     }
- 
+
     public void SetMember(object instance, string name, object? value)
     {
         try { API.SetMember(instance, name, value); }
         catch (TargetInvocationException e) { Rethrow(e); throw; }
     }
- 
+
     public object? CallMember(object instance, string name, params object?[] args)
     {
         try { return API.CallMember(instance, name, args); }
         catch (TargetInvocationException e) { Rethrow(e); throw; }
     }
- 
+
     // threading
     public void RunOnMainThread(Action action) => API.RunOnMainThread(action);
 

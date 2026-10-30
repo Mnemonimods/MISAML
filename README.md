@@ -36,7 +36,7 @@ Linux:
 Windows (PowerShell):
 
 ```powershell
-.\build-windows.ps1
+powershell -ExecutionPolicy Bypass -File .\build-windows.ps1
 ```
 
 Both output to `dist/`. The contents of this folder can be moved next to your game executable, `mnemonimov.exe` (Windows) or `mneminomov.x86_64` (Linux).

@@ -51,7 +51,7 @@ Start the game through the launcher, not through Steam:
 
 (this may require `chmod +x ./misaml-cli` to make the file executable)
 
-or, Windows:
+or, Windows (clicking the file also works):
 
 ```powershell
 .\misaml-cli.exe

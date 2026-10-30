@@ -94,6 +94,7 @@ Then enable it in `misaml.toml`. See the modding documentation (WIP) for how to 
 - **Mods are not sandboxed.** A mod runs with your user's permissions, the same as any program you start. Only install mods you trust.
 - **Antivirus.** On Windows the launcher starts the game and loads a DLL into it. Some antivirus software flags that pattern. If yours does, it is a false positive, but check the source if you are unsure.
 - The loader only uses the network to install the runtime, after that it will not use the network. If anything is using the network, check your mods.
+- Mac support is completely untested.
 
 ## Status
 

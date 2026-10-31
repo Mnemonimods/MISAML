@@ -261,11 +261,19 @@ For types that aren't basic types, write the full name, for example `Godot.Colle
 - It can target instance and static methods, public or not.
 - It finds a method on a type or on a type it inherits from. For a static method, register on the type that declares it. MISAML logs an error that says so if you don't.
 - It can't target abstract methods, generic methods, or methods declared on `System.Object`. This will be logged, and the logs will say which.
+- **The replacement has to be the exact return type.** A method that returns `long` needs `Replace(1L)`. `Replace(1)` is an `int`, so MISAML logs a warning and runs the game's method instead.
+- **A hook on a base method only catches calls that run the base method.** An override that doesn't call the base isn't covered. Register on the type that declares the override.
+- **Parameters that are generic types** (like `List<string>`) don't match reliably when you write the signature out. Use `Name(*)` for these.
 
 ### Things to watch for
 
 - **Register inside your entry method.** MISAML records which mod a hook belongs to while the entry method runs. A hook registered later, such as inside an `OnReady` callback, isn't recorded as yours. The log then shows your assembly name instead of your mod id, and a priority set for you in `misaml.toml` isn't applied.
-- **"Registered" doesn't mean "patched".** The log line `successfully registered handler from <mod> (priority N), position X of Y` means MISAML accepted your handler. When it also finds and patches the game's method, you get a second line: `patched <type>::<method>(<signature>)`. If you never see that line, the method wasn't found. Either the type or method name is wrong, or the game's assembly hasn't loaded yet (MISAML waits and patches as soon as it does). A wrong name is not reported as an error. If another hook already patched the same method, you won't get a second `patched` line, but your handler is still in the chain.
+- **"Registered" doesn't mean "patched".** The log line `successfully registered handler from <mod> (priority N), position X of Y` means MISAML accepted your handler. It doesn't mean it found the method. Right after it, look for one of these:
+  - `patched <type>::<method>(<signature>)`: the method was found and hooked.
+  - An error naming the problem (no such method, several overloads, and so on). Fix it using the Hooks table below.
+  - `not patched yet, watching for its assembly to load`: nothing was hooked yet. MISAML patches as soon as the assembly loads. A wrong **type** name looks the same, with no error, so if you still don't get `patched` once the game is running, check the type name first.
+
+  To check, search `misaml.log` for `patched <Type>::<Method>`. If it's missing, read the lines after `registered`. If another hook already patched the same method, you won't get a second `patched` line, but your handler is still in the chain.
 - **A replacement has to fit.** For a method that returns a value, the value in `HookResult.Replace(value)` has to be of the method's return type. If it isn't, MISAML logs a warning and runs the game's method instead. `null` can't replace a value type such as `int`.
 - **Priority.** The default is 100. The priority you pass in code is only a default for your mod. If the user sets a priority for your mod in `misaml.toml`, it replaces the number you pass, for every hook your mod registers.
 
@@ -348,7 +356,7 @@ ids.RegisterSyscall("SYS_EXAMPLE", vm => {
 });
 ```
 
-A member is looked up the first time and cached, so repeat reads are relatively cheap. If you read the same member on every call anyway, keep the result in a variable and reuse it. Look at the decompiled `VirtualMachine` for the real names and types. They are the game's internals and can change in any update.
+A member is looked up the first time and cached, so repeat reads are relatively cheap. Read `_registers` fresh on every call, and never keep it in a variable. The VM points `_registers` at a different array each time it switches process, so a saved copy can belong to the wrong process. `_memory` is set once when a program starts, so you can keep it for the length of one run, but clear it when the next program starts (hook `Asm.Running.VirtualMachine`’s `Initialize` for that). Look at the decompiled `VirtualMachine` for the real names and types. They are the game’s internals and can change in any update.
 
 ### Values
 
@@ -648,7 +656,7 @@ Check `misaml.log` first. These are the entries you're most likely to see.
 | What you see / what happens | What it means |
 |---|---|
 | My syscall word isn't recognised in the editor | Check that the mod is enabled and that `RegisterSyscall` returned `true` (it returns `false` if the word is already taken). The words are only added once every mod has loaded. |
-| My hook never runs, and nothing is logged | The type name or method name is wrong. Check it with `MISAML_DEBUG=1` (step 5 of "Finding methods to hook"). |
+| My hook never runs | Search `misaml.log` for `patched <Type>::<Method>`. If it's missing, read the lines after `registered`. An error line names the problem. Only `not patched yet` means the type name is wrong or its assembly hasn't loaded. You can look names up with `MISAML_DEBUG=1` (step 5 of "Finding methods to hook"). |
 | `GDScript failed to compile` | There's an error in your script. See the game's console. |
 | `script loaded but it isn't a Node` | Your script needs `extends Node`. |
 | `GDScript failed to start` | The script compiled, but starting it threw. The message follows. |
@@ -726,6 +734,10 @@ A short list of everything a mod can call. The examples earlier in the document 
 | `Register(Type? type, string methodName, handler, int priority)` | `bool` | The same, with the type given directly. Needs a type that has a full name. |
 | `Register<T>(string methodName, handler, int priority = 100)` | `bool` | The same, using a type parameter. This needs your project to reference the DLL that contains `T`. |
 | `Hooks.DefaultPriority` | `int` | 100. |
+| `<type>::<method>: patched <type>::<method>(<signature>)` | The method was found and hooked. Only the first handler registered for a method logs this. |
+| `<type>::<method>: not patched yet, watching for its assembly to load` | Nothing was hooked yet. MISAML patches when the assembly loads. After an error line, fix the error. With no error, check the type name. |
+| `<type> has no method called '<name>'` | The type exists but has no method with that name. Check the spelling, and which type declares it. |
+| `could not read the methods of <type> to find '<name>'` | The type was found but .NET couldn't list its methods, usually because a DLL it needs is missing. A warning. Nothing was hooked. |
 
 The `bool` is `false` only if the registration was refused (for example, an empty name). It is `true` even if the method hasn't been found yet. The method name can include a signature, see "Choosing an overload".
 

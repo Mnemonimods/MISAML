@@ -59,7 +59,7 @@ namespace MISAML.Bootstrap;
 //
 // The bootstrap only does what is described above.
 
-public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startupHook, ILogger<Loader> logger)
+public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore core, ILogger<Loader> logger)
 {
     public static Loader? Instance;
 
@@ -91,9 +91,9 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
             // Harmony setup runs directly, in Default context, no context
             // switching. Harmony patches VirtualMachine.HandleSystemCall,
             // the 58 bridge methods, all others, etc. etc.
-            logger.LogInformation("calling StartupHook.Initialize() directly...");
-            startupHook.Initialize();
-            logger.LogInformation("StartupHook.Initialize() returned");
+            logger.LogInformation("calling Core.Initialize() directly...");
+            core.Initialize();
+            logger.LogInformation("Core.Initialize() returned");
 
             // Load MISAML.GodotAPI.dll separately, into the isolated context
             // to interface with the Godot API directly.

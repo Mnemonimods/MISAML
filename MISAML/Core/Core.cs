@@ -81,13 +81,12 @@ public class Core(
         logger.LogInformation("MISAML.Core startup complete.");
     }
 
-    //TODO: Add individual timestamping for each method ran in MISAML.Debug
     private void RunSearch(string label, SearchResult result)
     {
         logger.LogInformation(label, @$"
             complete: {result.TypesScanned} types, {result.Patchable} patchable,
             {result.Skipped} skipped, {result.Failed} failed. 
-            Full list at misaml-debug.log"
+            Full list at misaml.log"
             );
     }
 }

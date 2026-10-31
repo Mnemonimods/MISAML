@@ -370,6 +370,7 @@ public class Hooks() : IHooks
             if (PatchedKeys.Contains(patchKey))
             {
                 AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+                _logger.LogInformation($"{patchKey}: already patched, handler added to its chain");
                 return;
             }
             else
@@ -385,6 +386,7 @@ public class Hooks() : IHooks
 
         // found now, or already done by listener, unsub
         if (finished) AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+        else _logger.LogInformation($"{patchKey}: not patched yet, watching for its assembly to load");
 
         // calls whenever a new Assembly is loaded, checks the loaded assembly
         // for the method we are looking for
@@ -456,6 +458,12 @@ public class Hooks() : IHooks
                 )
                 .Where(m => m.Name == methodName)
                 .ToList();
+
+            if (sameName.Count == 0)
+            {
+                _logger.LogError($"{typeName} has no method called '{methodName}'");
+                return found;
+            }
 
             // a bare name on an overloaded method is ambiguous, "Foo(*)" hooks
             // all of them on purpose

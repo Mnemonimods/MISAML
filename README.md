@@ -1,13 +1,13 @@
 # MISAML
 
-MISAML is a mod loader for [Mneminomov](https://store.steampowered.com/app/3854110/Mnemonimov/), a game based on low-level programming with a fantasy console.
+MISAML is a mod loader for [Mnemonimov](https://store.steampowered.com/app/3854110/Mnemonimov/), a game based on low-level programming with a fantasy console.
 
-MISAML lets you hook into and modify almost any function within the game, whether it be syscalls, the lexer, and more, using either C# or GDScript, without modifying any of the games files. Examples of what have been done so far are adding sound, colour, and additional syscalls to the game, as well as custom GUI's on top of the game, and a headless interface for the virtual machine.
+MISAML lets you hook into and modify almost any function within the game, whether it be syscalls, the lexer, and more, using either C# or GDScript, without modifying any of the game's files. Examples of what have been done so far are adding sound, colour, and additional syscalls to the game, as well as custom GUIs on top of the game, and a headless interface for the virtual machine.
 
 ## What you get
 
 - Mods are plain folders in `mods/` (next to the game executable). Each mod has a manifest, `mod.json`.
-- Mods can depend on other mods (with semantic version ranges), with dependency resolving, and helpful logs to tell you when your dependencies are out of order. In the future there will be automatic updating, and more.
+- Mods can depend on other mods (with semantic version ranges). MISAML loads dependencies first, and the log tells you when one is missing or the wrong version. In the future there will be automatic updating, and more.
 - The game's own files are never modified, everything is patched at runtime with Harmony.
 
 ## Requirements
@@ -39,7 +39,7 @@ Windows (PowerShell):
 powershell -ExecutionPolicy Bypass -File .\build-windows.ps1
 ```
 
-Both output to `dist/`. The contents of this folder can be moved next to your game executable, `mnemonimov.exe` (Windows) or `mneminomov.x86_64` (Linux).
+Both output to `dist/`. The contents of this folder can be moved next to your game executable, `mnemonimov.exe` (Windows) or `mnemonimov.x86_64` (Linux).
 
 ## Run
 
@@ -72,7 +72,7 @@ If the game files have changed (likely due to an update), and it refuses to star
 
 ## Mods
 
-Put a mod folder in `/mods/`:
+Put a mod folder in `mods/`:
 
 ```
 dist/mods/
@@ -82,11 +82,11 @@ dist/mods/
     main.gd
 ```
 
-Then enable it in `misaml.toml`. See the modding documentation (WIP) for how to write one. If not enabled manually, new mods will be automatically enabled on launch, and added to `misaml.toml`.
+New mods are enabled automatically the first time MISAML sees them, and are added to `misaml.toml`. To turn one off, set it to `false` there. To write your own, see [MODDING.md](MODDING.md).
 
 ## Logs and debugging
 
-- `misaml.log`, next to `MISAML.dll`, is the loader's log.
+- `misaml.log`, next to `MISAML.dll`, is the loader's log. It is cleared every time the game starts, so copy it somewhere if you want to keep it.
 - Set `MISAML_DEBUG=1` for more detail.
 
 ## Things to know

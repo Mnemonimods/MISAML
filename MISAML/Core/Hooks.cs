@@ -385,6 +385,7 @@ public class Hooks() : IHooks
 
         // found now, or already done by listener, unsub
         if (finished) AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+        else _logger.LogInformation($"{patchKey}: not patched yet, watching for its assembly to load");
 
         // calls whenever a new Assembly is loaded, checks the loaded assembly
         // for the method we are looking for
@@ -443,9 +444,11 @@ public class Hooks() : IHooks
     {
         var found = new List<MethodInfo>();
 
+        Type? type = null;
+
         try
         {
-            var type = asm.GetType(typeName);
+            type = asm.GetType(typeName);
             if (type == null) return found;
 
             var sameName = type
@@ -454,6 +457,12 @@ public class Hooks() : IHooks
                 )
                 .Where(m => m.Name == methodName)
                 .ToList();
+
+            if (sameName.Count == 0)
+            {
+                _logger.LogError($"{typeName} has no method called '{methodName}'");
+                return found;
+            }
 
             // a bare name on an overloaded method is ambiguous, "Foo(*)" hooks
             // all of them on purpose
@@ -503,8 +512,14 @@ public class Hooks() : IHooks
         }
         catch (Exception e)
         {
-            // an assembly that can't be searched must never break an assembly load
-            _logger.LogDebug($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
+            if (type != null)
+            {
+                _logger.LogWarning($"could not read the methods of {typeName} to find '{methodName}': {e.GetType().Name}: {e.Message}");
+            }
+            else
+            {
+                _logger.LogDebug($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
+            }
         }
 
         return found;

@@ -15,5 +15,6 @@ public record ModManifest(
     string? EntryAssembly,
     string? EntryMethod,
     string? EntryScript,
+    LoadContextKind Context,
     IReadOnlyList<Dependency> Dependencies
 );

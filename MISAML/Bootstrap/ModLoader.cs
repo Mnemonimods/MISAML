@@ -56,6 +56,16 @@ public class ModLoader(
     private Assembly? FindInGame(AssemblyName name)
         => GameContext?.Assemblies.FirstOrDefault(a => a.GetName().Name == name.Name);
 
+    // the room a mod's dlls load into, null if the game's room isn't known yet
+    private AssemblyLoadContext? ContextFor(LoadContextKind kind)
+        => kind == LoadContextKind.Game ? GameContext : AssemblyLoadContext.Default;
+
+    private Assembly? ResolveFromMods(AssemblyLoadContext ctx, AssemblyName name)
+    {
+        if (name.Name == null || !_dllIndex.TryGetValue(name.Name, out var path)) return null;
+        return ctx.LoadFromAssemblyPath(path);
+    }
+
     /*
     an example mod.json:
 
@@ -151,6 +161,15 @@ public class ModLoader(
             ));
         }
 
+        // which room the mod loads into, anything but these throw
+        var context = raw.Context?.Trim().ToLowerInvariant() switch
+        {
+            null => LoadContextKind.Default,
+            "default" => LoadContextKind.Default,
+            "game" => LoadContextKind.Game,
+            _ => throw new Exception($"context '{raw.Context}' is not valid (use \"default\" or \"game\")")
+        };
+
         return new ModManifest(
             id,
             raw.ModName ?? id,
@@ -163,6 +182,7 @@ public class ModLoader(
             raw.EntryAssembly,
             raw.EntryMethod,
             raw.EntryScript,
+            context,
             [.. dependencies.OrderBy(d => d.Id, StringComparer.OrdinalIgnoreCase)]
         );
     }
@@ -178,19 +198,18 @@ public class ModLoader(
         }
 
         // assembly name -> full path, for every DLL in every mod that will
-        // load, incl. subfolders, before any mod loads, the Resolving hook
-        // looks up names here
+        // load, incl. subfolders, before any mod loads, the Resolving hooks
+        // look up names here
         if (!_resolvingHooked)
         {
             _resolvingHooked = true;
-            AssemblyLoadContext.Default.Resolving += (ctx, name) =>
-            {
-                var shared = FindInGame(name);
-                if (shared != null) return shared;
 
-                if (name.Name == null || !_dllIndex.TryGetValue(name.Name, out var path)) return null; // not found
-                return ctx.LoadFromAssemblyPath(path);
-            };
+            // the Default context, for anything that still resolves through it
+            AssemblyLoadContext.Default.Resolving += (ctx, name) => FindInGame(name) ?? ResolveFromMods(ctx, name);
+
+            // mods load into the game's context, so their sibling dlls are requested from it
+            if (GameContext != null)
+                GameContext.Resolving += ResolveFromMods;
         }
 
         // pass one, before any mod loads, list every mod folder (sorted)
@@ -452,7 +471,8 @@ public class ModLoader(
         }
 
         _mods.Add(new ModStatus(manifest.Id, manifest.Name, manifest.Version, true, err == null, err, manifest.Description));
-        logger.LogInformation(err == null ? $"{manifest.Id}: loaded OK" : $"{manifest.Id}: failed to load - {err}");
+        var room = manifest.EntryAssembly != null && manifest.Context == LoadContextKind.Game ? " (game context)" : "";
+        logger.LogInformation(err == null ? $"{manifest.Id}: loaded OK{room}" : $"{manifest.Id}: failed to load - {err}");
         return err;
     }
 
@@ -559,7 +579,15 @@ public class ModLoader(
         if (!File.Exists(dllPath))
             throw new FileNotFoundException($"assembly not found: {dllPath}");
 
-        var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
+        var context = ContextFor(manifest.Context)
+                    ?? throw new Exception("this mod needs the game context, which is not available yet");
+        var asm = context.LoadFromAssemblyPath(dllPath);
+
+        // a default-room mod that uses GodotSharp would get its own unconnected copy
+        // and crash the game on the first Godot call, so refuse it before it runs
+        if (manifest.Context == LoadContextKind.Default
+            && asm.GetReferencedAssemblies().Any(r => r.Name == "GodotSharp"))
+            throw new Exception("this mod uses GodotSharp but loads in the default context, where Godot calls crash the game. Add \"context\": \"game\" to its mod.json, or call Godot through GodotBridge");
 
         if (manifest.EntryMethod == null)
             throw new Exception("entryAssembly requires entryMethod in mod.json (Hint: Namespace.Class.Method)");

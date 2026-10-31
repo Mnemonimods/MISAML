@@ -16,5 +16,6 @@ public class RawManifest
     public string? EntryAssembly { get; set; }
     public string? EntryMethod { get; set; }
     public string? EntryScript { get; set; }
+    public string? Context { get; set; }
     public Dictionary<string, RawDependency>? Dependencies { get; set; }
 }

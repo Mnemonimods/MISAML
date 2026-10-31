@@ -370,7 +370,6 @@ public class Hooks() : IHooks
             if (PatchedKeys.Contains(patchKey))
             {
                 AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
-                _logger.LogInformation($"{patchKey}: already patched, handler added to its chain");
                 return;
             }
             else
@@ -510,18 +509,18 @@ public class Hooks() : IHooks
                 var have = string.Join(" | ", sameName.Select(m => $"({SignatureOf(m)})"));
                 _logger.LogError($"{typeName}::{methodName}({signature}) matches no overload, the ones that exist are: {have}");
             }
-            }
-            catch (Exception e)
+        }
+        catch (Exception e)
+        {
+            if (type != null)
             {
-                if (type != null)
-                {
-                    _logger.LogWarning($"could not read the methods of {typeName} to find '{methodName}': {e.GetType().Name}: {e.Message}");
-                }
-                else
-                {
-                    _logger.LogDebug($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
-                }
+                _logger.LogWarning($"could not read the methods of {typeName} to find '{methodName}': {e.GetType().Name}: {e.Message}");
             }
+            else
+            {
+                _logger.LogDebug($"could not search {asm.GetName().Name} for {typeName}::{methodName}: {e.GetType().Name}");
+            }
+        }
 
         return found;
     }

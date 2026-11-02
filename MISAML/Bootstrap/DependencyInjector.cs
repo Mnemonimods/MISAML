@@ -9,6 +9,7 @@ using MISAML.Debug.Interfaces;
 using MISAML.Godot;
 using MISAML.Interfaces;
 using Serilog;
+using Serilog.Events;
 
 namespace MISAML.Bootstrap;
 
@@ -21,11 +22,18 @@ public class DependencyInjector : IDisposable
 
     public ServiceProvider Services { get; private set; } = null!;
 
+    private const string LogTemplate = "[{Elapsed:l} {Level:u3}] {Message:lj}{NewLine}{Exception}";
+
     public void Initialize()
     {
+        try { File.WriteAllText(logPath, ""); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+
         var serilogLogger = new LoggerConfiguration()
-            .WriteTo.Console()
+            .Enrich.With(new LogEnricher())
+            .WriteTo.Console(outputTemplate: LogTemplate)
             .WriteTo.File(logPath,
+                outputTemplate: LogTemplate,
                 retainedFileCountLimit: null)
             .CreateLogger();
 
@@ -52,17 +60,24 @@ public class DependencyInjector : IDisposable
         services.AddSingleton<IModLoader, ModLoader>();
         services.AddTransient<IModSettings, ModSettings>();
         services.AddTransient<IVersionReq, VersionReq>();
+        services.AddSingleton<IDependencyResolver, DependencyResolver>();
         services.AddSingleton<Loader>();
         services.AddSingleton<GodotBridgePatch>();
-
-        // debug things but that are required for the dependency injection, lol
         services.AddSingleton<IDebug, Debug.Debug>();
         services.AddSingleton<IBridge, Bridge>();
         services.AddSingleton<IGodotSharp, GodotSharp>();
         services.AddSingleton<IMnemonimov, Mnemonimov>();
         services.AddSingleton<IAsm, Asm>();
+        services.AddSingleton<IIdScanner, IdScanner>();
+        services.AddSingleton<IIdRegistry, IdRegistry>();
+        services.AddSingleton<IIdWriter, IdWriter>();
+        services.AddSingleton<IIds, Ids>();
 
         Services = services.BuildServiceProvider();
+
+        // nothing asks for/uses IIds, but building it is what hands
+        // mods the reg and it has to exist before any mods load
+        Services.GetRequiredService<IIds>();
     }
 
     public void Dispose() => Services?.Dispose();

@@ -57,15 +57,23 @@ public class GodotBridgePatch() : IGodotBridgePatch
 
     public void TryPatch(Harmony harmony, Assembly mnemonimovAssembly)
     {
-        var prefix = new HarmonyMethod(
-            typeof(GodotBridgePatch).GetMethod(nameof(BridgePrefix),
-                BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new Exception("BridgePrefix not found!"));
+        // logging needs the call's args and result, which makes Harmony allocate
+        // on every call, even when nothing gets logged, according to profiler,
+        // so... the logging versions are only patched in when debug is on,
+        // otherwise a light prefix that only needs the instance
+        var debug = Core.Core.DebugEnabled;
 
-        var postfix = new HarmonyMethod(
-            typeof(GodotBridgePatch).GetMethod(nameof(BridgePostfix),
+        var prefix = new HarmonyMethod(
+            typeof(GodotBridgePatch).GetMethod(debug ? nameof(BridgePrefixDebug) : nameof(BridgePrefix),
                 BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new Exception("BridgePostfix not found!"));
+            ?? throw new Exception("bridge prefix not found!"));
+
+        var postfix = debug
+            ? new HarmonyMethod(
+                typeof(GodotBridgePatch).GetMethod(nameof(BridgePostfix),
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new Exception("BridgePostfix not found!"))
+            : null;
 
         int totalPatched = 0;
         int totalFailed = 0;
@@ -109,27 +117,31 @@ public class GodotBridgePatch() : IGodotBridgePatch
 
         _logger.LogInformation($"complete: {totalPatched} patched across {BridgeTypeNames.Length} types, {totalFailed} failed.");
     }
-    private static void BridgePrefix(MethodBase __originalMethod, object[] __args, object __instance)
-    {
-        if (Core.Core.DebugEnabled)
-        {
-            try
-            {
-                string args = __args is { Length: > 0 }
-                    ? string.Join(", ", __args.Select(a => a?.ToString() ?? "null"))
-                    : "";
-                _logger.LogInformation($"-> {__originalMethod.DeclaringType?.Name}.{__originalMethod.Name}({args})");
-            }
-            catch (Exception e)
-            {
-                _logger.LogWarning("prefix logging failed: " + e.GetType().Name);
-            }
-        }
+    private static void BridgePrefix(object __instance) => RaiseInstanceSeen(__instance);
 
+    private static void BridgePrefixDebug(MethodBase __originalMethod, object[] __args, object __instance)
+    {
         try
         {
-            if (__instance != null)
-                OnBridgeInstanceSeen?.Invoke(__instance);
+            string args = __args is { Length: > 0 }
+                ? string.Join(", ", __args.Select(a => a?.ToString() ?? "null"))
+                : "";
+            _logger.LogInformation($"-> {__originalMethod.DeclaringType?.Name}.{__originalMethod.Name}({args})");
+        }
+        catch (Exception e)
+        {
+            _logger.LogWarning("prefix logging failed: " + e.GetType().Name);
+        }
+
+        RaiseInstanceSeen(__instance);
+    }
+
+    private static void RaiseInstanceSeen(object? instance)
+    {
+        try
+        {
+            if (instance != null)
+                OnBridgeInstanceSeen?.Invoke(instance);
         }
         catch (Exception e)
         {
@@ -137,10 +149,9 @@ public class GodotBridgePatch() : IGodotBridgePatch
         }
     }
 
+    // only patched in when debug is on
     private static void BridgePostfix(MethodBase __originalMethod, object __result)
     {
-        if (!Core.Core.DebugEnabled) return;
-
         try
         {
             string result = __result?.ToString() ?? "void";
@@ -150,6 +161,5 @@ public class GodotBridgePatch() : IGodotBridgePatch
         {
             _logger.LogWarning("postfix logging failed: " + e.Message);
         }
-
     }
 }

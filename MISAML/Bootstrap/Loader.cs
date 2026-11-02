@@ -123,7 +123,7 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
         }
         catch (Exception e)
         {
-            logger.LogError("Start failed: " + e.Message);
+            logger.LogError(e, $"Start failed: {e.Message}");
         }
     }
 
@@ -131,6 +131,11 @@ public class Loader(IGodotBridge godotBridge, IModLoader modLoader, ICore startu
     {
         // game is running, tree exists
         GodotBridgePatch.OnBridgeInstanceSeen -= OnFirstBridgeCall;
+
+        // before the game's own call runs, so its first lex already knows mod words
+        modLoader.AllocateIds();
+
+        // game is running, tree exists
         godotBridge.RaiseReady();
     }
 

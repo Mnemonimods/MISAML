@@ -94,7 +94,7 @@ public class Hooks() : IHooks
     // handlers per type + method, already sorted into run order. Arrays are
     // replaced whole (copy-on-write)m so the patched prefixes can read a chain
     // while another thread is registering without taking a lock
-    private static readonly ConcurrentDictionary<string, Registration[]> Chains = new();
+    private static readonly ConcurrentDictionary<(string Type, string Method), Registration[]> Chains = new();
 
     // protects building a new chain from concurrent registrations
     private static readonly object ChainLock = new();
@@ -232,7 +232,7 @@ public class Hooks() : IHooks
 
         lock (ChainLock)
         {
-            var current = Chains.TryGetValue(key, out var existing) ? existing : Array.Empty<Registration>();
+            var current = Chains.TryGetValue((typeName, name), out var existing) ? existing : Array.Empty<Registration>();
             var added = new Registration(handler, priority, _nextOrder++, owner, signature);
 
             // rebuild the sorded chain w/ the new handler in it
@@ -242,7 +242,7 @@ public class Hooks() : IHooks
                 .ThenBy(r => r.Order)
                 .ToArray();
 
-            Chains[key] = next;
+            Chains[(typeName, name)] = next;
             pos = Array.IndexOf(next, added) + 1;
             total = next.Length;
         }
@@ -637,22 +637,19 @@ public class Hooks() : IHooks
     private static HookResult RunChain(MethodBase original, object? instance, object?[] args)
     {
         var chain = CollectChain(original, instance);
-        if (chain.Count == 0) return HookResult.Continue();
+        if (chain.Length == 0) return HookResult.Continue();
 
-        // only used for the log message
-        var key = Key(original.DeclaringType?.FullName ?? "", original.Name);
-
-        for (var i = 0; i < chain.Count; i++)
+        for (var i = 0; i < chain.Length; i++)
         {
             var result = InvokeSafely(chain[i], instance, args, original);
             if (!result.SkipOriginal) continue; /* not this handler's call, next one */
 
-            // not logged every time normally, a handler replacing a call it owns
-            // while other handlers wait is the normal case (e.g. each mod owns
-            // its own syscall).
-            if (Core.DebugEnabled && i < chain.Count - 1)
+            // not logged normally, a handler replacing a call it owns while
+            // other handlers wait is the "usual" case (each mod owns its own syscall)
+            if (Core.DebugEnabled && i < chain.Length - 1)
             {
-                _logger.LogDebug($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Count - i - 1} later handler(s) not run.");
+                var key = Key(original.DeclaringType?.FullName ?? "", original.Name);
+                _logger.LogDebug($"{key}: handler from {chain[i].Owner} replaced the call, {chain.Length - i - 1} later handler(s) not run.");
             }
 
             return result;
@@ -661,43 +658,91 @@ public class Hooks() : IHooks
         return HookResult.Continue();
     }
 
-    // every handler that applies to this call, registered on the instance's
-    // type or on any type btwn it and the one that declares the method, and
-    // for an overload hook, only if the signature matches. a static call has
-    // no instance, so only the decl type counts.
+    private static readonly Registration[] NoHandlers = [];
+
     /// <summary>
-    /// Collects handlers registered on the instance's type hierarchy that apply to
-    /// the original method, filtering by signature when specified and merging by priority.
+    /// Filters one chain down to the handlers that apply to this overload. A
+    /// chain with no signature filter(s) is returned as is, so nothing is
+    /// allocated.
+    /// </summary>
+    /// <param name="chain">A chain of handlers, already sorted.</param>
+    /// <param name="original">The original method being called.</param>
+    /// <returns>The handler that matches the signature filter, in the same order.</returns>
+    private static Registration[] ForOverload(Registration[] chain, MethodBase original)
+    {
+        string? signature = null;
+        List<Registration>? kept = null;
+
+        for (var i = 0; i < chain.Length; i++)
+        {
+            var r = chain[i];
+            var applies =
+                r.Signature == null ||
+                r.Signature == "*" ||
+                r.Signature == (signature ??= SignatureOf(original));
+
+            if (applies)
+            {
+                kept?.Add(r);
+            }
+            else if (kept == null)
+            {
+                // first one that does not apply, start a copy of those that did
+                kept = new List<Registration>(chain.Length);
+                for (var j = 0; j < i; j++) kept.Add(chain[j]);
+            }
+        }
+
+        return kept == null ? chain : [.. kept];
+    }
+
+    // every handler that applies to this call, registered on the instance's
+    // type or on any type btwn it and the one that declares the method. one
+    // chain applying (usual case) is returned as is, it is already sorted.
+    // only a second chain forces a merge and re-sort.
+    /// <summary>
+    /// Collects all handlers applicable to the original method from the
+    /// instance's type up to and including the method's declaring type.
     /// </summary>
     /// <param name="original">The original method being called.</param>
-    /// <param name="instance">The instance the method is called on, or null
-    /// for static methods.</param>
-    /// <returns>The matching handlers ordered by priority, then registration order.</returns>
-    private static IReadOnlyList<Registration> CollectChain(MethodBase original, object? instance)
+    /// <param name="instance">The instance the method is being called on, or
+    /// null for static methods.</param>
+    /// <returns>The matching handlers in run order (priority, then registration
+    /// order). Empty if none apply.</returns>
+    private static Registration[] CollectChain(MethodBase original, object? instance)
     {
         var declaring = original.DeclaringType;
-        string? signature = null;
-        List<Registration>? matched = null;
+        var name = original.Name;
+
+        Registration[]? only = null;
+        List<Registration>? merged = null;
 
         for (var t = instance?.GetType() ?? declaring; t != null; t = t.BaseType)
         {
-            if (Chains.TryGetValue(Key(t.FullName ?? "", original.Name), out var chain))
+            if (Chains.TryGetValue((t.FullName ?? "", name), out var chain))
             {
-                foreach (var r in chain)
+                var applicable = ForOverload(chain, original);
+                if (applicable.Length > 0)
                 {
-                    if (r.Signature != null && r.Signature != "*" && r.Signature != (signature ??= SignatureOf(original))) continue;
-                    (matched ??= []).Add(r);
+                    if (only == null)
+                    {
+                        only = applicable;
+                    }
+                    else
+                    {
+                        merged ??= [.. only];
+                        merged.AddRange(applicable);
+                    }
                 }
             }
 
             if (t == declaring) break;
         }
 
-        if (matched == null) return Array.Empty<Registration>();
-        if (matched.Count == 1) return matched;
+        if (merged != null)
+            return merged.OrderBy(r => r.Priority).ThenBy(r => r.Order).ToArray();
 
-        // each chain was already sorted, merge into one run order
-        return matched.OrderBy(r => r.Priority).ThenBy(r => r.Order).ToList();
+        return only ?? NoHandlers;
     }
 
     // uses a handler's replacement value as the method's result, returns true

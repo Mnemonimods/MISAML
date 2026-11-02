@@ -85,7 +85,7 @@ public class GodotBridgePatch() : IGodotBridgePatch
             try
             {
                 bridgeType = mnemonimovAssembly.GetType(typeName)
-                             ?? throw new Exception($"{typeName} not found");
+                             ?? throw new TypeNotFoundException($"{typeName} not found");
             }
             catch (Exception e)
             {

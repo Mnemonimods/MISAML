@@ -5,13 +5,15 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
 using System.Text.RegularExpressions;
+using System.Threading;
+using Microsoft.Extensions.Logging;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
+using MISAML.Exceptions.Dependencies;
+using MISAML.Exceptions.Manifests;
 using MISAML.Interfaces;
-using System.Threading;
 
 namespace MISAML.Bootstrap;
 
@@ -107,14 +109,14 @@ public class ModLoader(
     private ModManifest ParseManifest(string json)
     {
         var raw = JsonSerializer.Deserialize<RawManifest>(json, JsonOptions)
-                  ?? throw new Exception("mod.json is empty");
+                  ?? throw new BadModManifestException("mod.json is empty");
 
         var id = raw.ModId?.Trim();
         if (string.IsNullOrEmpty(id))
-            throw new Exception("mod.json requires a modId");
+            throw new BadModManifestException("mod.json requires a modId");
 
         if (!IdPattern.IsMatch(id))
-            throw new Exception($"modId '{id}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
+            throw new BadModManifestException($"modId '{id}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
 
         var dependencies = new List<Dependency>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -123,10 +125,10 @@ public class ModLoader(
         {
             // ids ignore case
             if (!seen.Add(depId))
-                throw new Exception($"dependencies lists '{depId}' twice");
+                throw new BadDependencyException($"dependencies lists '{depId}' twice");
 
             if (!IdPattern.IsMatch(depId))
-                throw new Exception($"depId '{depId}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
+                throw new BadDependencyException($"depId '{depId}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
 
             foreach (var key in rawDep.UnknownKeys)
             {
@@ -136,10 +138,10 @@ public class ModLoader(
             }
 
             if (string.IsNullOrWhiteSpace(rawDep.Version))
-                throw new Exception($"dependency '{depId}' requires a version");
+                throw new BadDependencyException($"dependency '{depId}' requires a version");
 
             var range = versionReq.TryParse(rawDep.Version, out var rangeErr)
-                        ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
+                        ?? throw new BadDependencyException($"dependency '{depId}' has a bad version: {rangeErr}");
 
             var source = rawDep.Source == null ? null : CleanSource(depId, rawDep.Source);
 
@@ -432,8 +434,7 @@ public class ModLoader(
         try
         {
             if (manifest.EntryAssembly == null && manifest.EntryScript == null)
-                throw new Exception("mod manifest requires an entry assembly or script");
-
+                throw new ModManifestAssemblyException("mod manifest requires an entry assembly or script!");
 
             // everything the mod registers while this block runs is owned
             // by its modId, so Hooks can name the mod in the log
@@ -562,22 +563,22 @@ public class ModLoader(
         var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
 
         if (manifest.EntryMethod == null)
-            throw new Exception("entryAssembly requires entryMethod in mod.json (Hint: Namespace.Class.Method)");
+            throw new ModManifestAssemblyException("entryAssembly requires entryMethod in mod.json (Hint: Namespace.Class.Method)");
 
         // split at the last dot, before it is the class, after it's the method
         var split = manifest.EntryMethod.LastIndexOf('.');
         if (split <= 0 || split == manifest.EntryMethod.Length - 1)
-            throw new Exception($"entryMethod '{manifest.EntryMethod}' must look like Namespace.Class.Method (or Class.Method with no namespace)");
+            throw new ModManifestAssemblyException($"entryMethod '{manifest.EntryMethod}' must look like Namespace.Class.Method (or Class.Method with no namespace)");
 
         var className = manifest.EntryMethod[..split];
         var methodName = manifest.EntryMethod[(split + 1)..];
 
         var entryType = asm.GetType(className)
-                        ?? throw new Exception($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");
+            ?? throw new ModManifestAssemblyException($"class '{className}' not found in {manifest.EntryAssembly} (entryMethod is Namespace.Class.Method)");
 
         var initMethod = entryType.GetMethod(
-                             methodName, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)
-                         ?? throw new Exception($"{className}.{methodName}() not found (must be public static, no parameters)");
+                methodName, BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)
+            ?? throw new ModManifestAssemblyException($"{className}.{methodName}() not found (must be public static, no parameters)");
 
         initMethod.Invoke(null, null);
     }

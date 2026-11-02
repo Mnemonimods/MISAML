@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using MISAML.Exceptions.Patching;
 using MISAML.Interfaces;
 
 namespace MISAML.Godot;
@@ -26,12 +27,12 @@ public class GodotBridge() : IGodotBridge
     public static void Bind(Assembly isolatedApi)
     {
         var primitives = isolatedApi.GetType("MISAML.GodotAPI.Primitives")
-            ?? throw new Exception("MISAML.GodotAPI.Primitives not found!");
+            ?? throw new PrimitivesException("MISAML.GodotAPI.Primitives not found!");
 
         foreach (var field in typeof(API).GetFields(BindingFlags.Public | BindingFlags.Static))
         {
             var method = primitives.GetMethod(field.Name, BindingFlags.Public | BindingFlags.Static)
-                ?? throw new Exception($"Primitives.{field.Name} not found!");
+                ?? throw new PrimitivesException($"Primitives.{field.Name} not found!");
 
             try
             {
@@ -39,7 +40,7 @@ public class GodotBridge() : IGodotBridge
             }
             catch (ArgumentException e)
             {
-                throw new Exception($"Primitives.{field.Name} doesn't match what GodotBridge expected: {e.Message}", e);
+                throw new PrimitivesException($"Primitives.{field.Name} doesn't match what GodotBridge expected: {e.Message}", e);
             }
         }
     }

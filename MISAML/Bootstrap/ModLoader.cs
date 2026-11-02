@@ -430,11 +430,11 @@ public class ModLoader(
     {
         // a mod is a dll (entryAssembly), a GDScript (script), or both
         string? err = null;
-        
-            try
-            {
-                if (manifest.EntryAssembly == null && manifest.EntryScript == null)
-                    throw new ModManifestAssemblyException("mod manifest requires an entry assembly or script!");
+
+        try
+        {
+            if (manifest.EntryAssembly == null && manifest.EntryScript == null)
+                throw new ModManifestAssemblyException("mod manifest requires an entry assembly or script!");
 
             // everything the mod registers while this block runs is owned
             // by its modId, so Hooks can name the mod in the log

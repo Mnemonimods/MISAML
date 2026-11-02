@@ -18,7 +18,7 @@ public class ModManifestNotFoundException : Exception
     public ModManifestNotFoundException(string message) : base(message)
     {
     }
-    
+
     /// <summary>
     /// The exception that is thrown when a mod.json is malformed
     /// </summary>

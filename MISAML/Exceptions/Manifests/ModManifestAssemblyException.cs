@@ -18,7 +18,7 @@ public class ModManifestAssemblyException : Exception
     public ModManifestAssemblyException(string message) : base(message)
     {
     }
-    
+
     /// <summary>
     /// The exception that is thrown when a mod.json is malformed
     /// </summary>

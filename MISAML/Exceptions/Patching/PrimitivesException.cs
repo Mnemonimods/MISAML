@@ -7,7 +7,7 @@ public class PrimitivesException : Exception
     public PrimitivesException()
     {
     }
-    
+
     public PrimitivesException(string message) : base(message)
     {
     }

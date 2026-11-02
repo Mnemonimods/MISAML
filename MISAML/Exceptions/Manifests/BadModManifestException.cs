@@ -18,7 +18,7 @@ public class BadModManifestException : Exception
     public BadModManifestException(string message) : base(message)
     {
     }
-    
+
     /// <summary>
     /// The exception that is thrown when a mod.json is malformed
     /// </summary>

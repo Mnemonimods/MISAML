@@ -5,6 +5,7 @@ using System.Reflection;
 using HarmonyLib;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using MISAML.Exceptions.Patching;
 using MISAML.Interfaces;
 
 namespace MISAML.Godot;
@@ -66,13 +67,13 @@ public class GodotBridgePatch() : IGodotBridgePatch
         var prefix = new HarmonyMethod(
             typeof(GodotBridgePatch).GetMethod(debug ? nameof(BridgePrefixDebug) : nameof(BridgePrefix),
                 BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new Exception("bridge prefix not found!"));
+            ?? throw new BridgeNotFoundException("bridge prefix not found!"));
 
         var postfix = debug
             ? new HarmonyMethod(
                 typeof(GodotBridgePatch).GetMethod(nameof(BridgePostfix),
                     BindingFlags.NonPublic | BindingFlags.Static)
-                ?? throw new Exception("BridgePostfix not found!"))
+                ?? throw new BridgeNotFoundException("BridgePostfix not found!"))
             : null;
 
         int totalPatched = 0;

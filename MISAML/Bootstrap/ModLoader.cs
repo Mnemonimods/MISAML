@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using MISAML.Bootstrap.Interfaces;
 using MISAML.Bootstrap.Records;
 using MISAML.Core;
+using MISAML.Exceptions.Dependencies;
 using MISAML.Exceptions.Manifests;
 using MISAML.Interfaces;
 
@@ -108,14 +109,14 @@ public class ModLoader(
     private ModManifest ParseManifest(string json)
     {
         var raw = JsonSerializer.Deserialize<RawManifest>(json, JsonOptions)
-                  ?? throw new Exception("mod.json is empty");
+                  ?? throw new BadModManifestException("mod.json is empty");
 
         var id = raw.ModId?.Trim();
         if (string.IsNullOrEmpty(id))
-            throw new Exception("mod.json requires a modId");
+            throw new BadModManifestException("mod.json requires a modId");
 
         if (!IdPattern.IsMatch(id))
-            throw new Exception($"modId '{id}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
+            throw new BadModManifestException($"modId '{id}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
 
         var dependencies = new List<Dependency>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -124,10 +125,10 @@ public class ModLoader(
         {
             // ids ignore case
             if (!seen.Add(depId))
-                throw new Exception($"dependencies lists '{depId}' twice");
+                throw new BadDependencyException($"dependencies lists '{depId}' twice");
 
             if (!IdPattern.IsMatch(depId))
-                throw new Exception($"depId '{depId}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
+                throw new BadDependencyException($"depId '{depId}' is not valid (use letters, digits, '.', '_' or '-', max 64 characters)");
 
             foreach (var key in rawDep.UnknownKeys)
             {
@@ -137,10 +138,10 @@ public class ModLoader(
             }
 
             if (string.IsNullOrWhiteSpace(rawDep.Version))
-                throw new Exception($"dependency '{depId}' requires a version");
+                throw new BadDependencyException($"dependency '{depId}' requires a version");
 
             var range = versionReq.TryParse(rawDep.Version, out var rangeErr)
-                        ?? throw new Exception($"dependency '{depId}' has a bad version: {rangeErr}");
+                        ?? throw new BadDependencyException($"dependency '{depId}' has a bad version: {rangeErr}");
 
             var source = rawDep.Source == null ? null : CleanSource(depId, rawDep.Source);
 

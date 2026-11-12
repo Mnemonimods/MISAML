@@ -41,10 +41,18 @@ public class ModLoader(
     // every mod folder, sorted so load order is the same every time ran
     private static readonly List<string> _modDirs = [];
 
-    // assembly name -> full path, for every DLL in every mod folder 
-    // incl. subfolders. before any mod loads, the Resolving hook looks
-    // up names here
-    private static readonly Dictionary<string, string> _dllIndex = new(StringComparer.OrdinalIgnoreCase);
+    // one entry per DLL name: where the file is, which mod owns it, and which room that mod loads into
+    private readonly record struct IndexedDll(string Path, string OwnerId, LoadContextKind Kind);
+
+    // assembly name -> its entry, for every DLL in every mod that will load, incl.
+    // subfolders. before any mod loads, the Resolving hooks look up names here
+    private static readonly Dictionary<string, IndexedDll> _dllIndex = new(StringComparer.OrdinalIgnoreCase);
+
+    // the game's own dlls, never loaded from a mod folder
+    private static readonly HashSet<string> GameAssemblies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "GodotSharp", "Mnemonimov", "Asm", "MISAML", "MISAML.GodotAPI"
+    };
 
     private static bool _resolvingHooked = false;
 
@@ -60,10 +68,20 @@ public class ModLoader(
     private AssemblyLoadContext? ContextFor(LoadContextKind kind)
         => kind == LoadContextKind.Game ? GameContext : AssemblyLoadContext.Default;
 
-    private Assembly? ResolveFromMods(AssemblyLoadContext ctx, AssemblyName name)
+    private Assembly? ResolveFromMods(AssemblyLoadContext requester, AssemblyName name)
     {
-        if (name.Name == null || !_dllIndex.TryGetValue(name.Name, out var path)) return null;
-        return ctx.LoadFromAssemblyPath(path);
+        if (name.Name == null || !_dllIndex.TryGetValue(name.Name, out var dll)) return null;
+
+        // always the owner's room, whichever room asked
+        var target = ContextFor(dll.Kind);
+        if (target == null) return null;
+
+        // already loaded there: hand back that exact copy
+        var loaded = target.Assemblies.FirstOrDefault(a => a.GetName().Name == name.Name);
+        if (loaded != null) return loaded;
+
+        logger.LogDebug($"resolving '{name.Name}' for {requester.Name ?? "?"}: loading into {dll.Kind} (owner {dll.OwnerId})");
+        return target.LoadFromAssemblyPath(dll.Path);
     }
 
     /*
@@ -320,7 +338,7 @@ public class ModLoader(
 
         // only mods that will actually load get dlls idx'ed
         _dllIndex.Clear();
-        BuildDllIdx([.. result.LoadOrder.Select(m => m.Dir)]);
+        BuildDllIdx([.. result.LoadOrder]);
 
         var failed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -481,13 +499,16 @@ public class ModLoader(
     /// resolving duplicate names by keeping the first assembly encountered.
     /// </summary>
     /// <param name="dirs">The mod folders to scan for assemblies.</param>
-    private void BuildDllIdx(IReadOnlyList<string> dirs)
+    private void BuildDllIdx(IReadOnlyList<ReadMod> mods)
     {
-        foreach (var modDir in dirs)
+        foreach (var mod in mods)
         {
+            var modDir = mod.Dir;
+            var owner = mod.Manifest.Id;
+            var kind = mod.Manifest.Context;
+
             try
             {
-
                 var dlls = Directory
                     .EnumerateFiles(modDir, "*.dll", SearchOption.AllDirectories) /* find all dlls in the mod dir and subdirs */
                     .Where(path => !IsBuildOutput(modDir, path)) /* skip build output dirs */
@@ -498,16 +519,30 @@ public class ModLoader(
                 {
                     var name = Path.GetFileNameWithoutExtension(path);
 
-                    if (!_dllIndex.TryAdd(name, path))
+                    // game's own dlls come from the game, never from mod
+                    if (GameAssemblies.Contains(name))
                     {
-                        var kept = _dllIndex[name];
-                        var keptVer = VersionOf(kept);
+                        logger.LogWarning($"{owner}: ships {Path.GetFileName(path)}, which belongs to the game. Ignoring it.");
+                        continue;
+                    }
+
+                    if (_dllIndex.TryAdd(name, new IndexedDll(path, owner, kind))) continue;
+
+                    var kept = _dllIndex[name];
+
+                    // the second mod will get the first one's copy, in the first one's room
+                    if (kept.Kind != kind)
+                    {
+                        logger.LogWarning($"duplicate assembly '{name}': keeping {kept.Path} (mod {kept.OwnerId}, {kept.Kind} context), ignoring {path} (mod {owner}, {kind} context). Mod {owner} will use mod {kept.OwnerId}'s copy.");
+                        continue;
+                    }
+
+                        var keptVer = VersionOf(kept.Path);
                         var otherVer = VersionOf(path);
 
                         logger.LogWarning(keptVer != null && otherVer != null && keptVer != otherVer
-                            ? $"assembly '{name}' exists in two versions ({keptVer} in {kept} & {otherVer} in {path}), using {keptVer}. A mod built against {otherVer} may break"
-                            : $"duplicate assembly '{name}': keeping {kept}, ignoring {path}");
-                    }
+                            ? $"assembly '{name}' exists in two versions ({keptVer} in {kept.Path} & {otherVer} in {path}), using {keptVer}. A mod built against {otherVer} may break"
+                            : $"duplicate assembly '{name}': keeping {kept.Path}, ignoring {path}");
                 }
             }
             catch (Exception e)
@@ -517,7 +552,7 @@ public class ModLoader(
             }
         }
 
-        logger.LogInformation($"indexed {_dllIndex.Count} assemblies from {dirs.Count} mod folders");
+        logger.LogInformation($"indexed {_dllIndex.Count} assemblies from {mods.Count} mod folders");
     }
 
     /// <summary>
